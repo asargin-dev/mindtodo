@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { MapMeta } from '@/types'
-import { Plus, X, Menu, Brain, Trash2, Check } from 'lucide-react'
+import { Plus, X, Menu, Brain, Trash2, Check, Download, Upload, Copy, ClipboardPaste } from 'lucide-react'
 import { Button } from './ui/button'
 
 interface SidebarProps {
@@ -9,6 +9,8 @@ interface SidebarProps {
   onSelect: (id: string) => void
   onCreate: (name: string) => void
   onDelete: (id: string) => void
+  onExport: () => void
+  onImport: (data: string) => Promise<boolean>
   getProgress: (id: string) => number // 0-100
   collapsed: boolean
   onToggleCollapse: () => void
@@ -20,18 +22,35 @@ export function Sidebar({
   onSelect,
   onCreate,
   onDelete,
+  onExport,
+  onImport,
   getProgress,
   collapsed,
   onToggleCollapse,
 }: SidebarProps) {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importText, setImportText] = useState('')
 
   const handleCreate = () => {
     if (!newName.trim()) return
     onCreate(newName.trim())
     setNewName('')
     setCreating(false)
+  }
+
+  const handleImport = async () => {
+    if (!importText.trim()) return
+    try {
+      const success = await onImport(importText.trim())
+      if (success) {
+        setImportText('')
+        setImporting(false)
+      }
+    } catch (error) {
+      console.error('Import failed:', error)
+    }
   }
 
   return (
@@ -243,10 +262,65 @@ export function Sidebar({
 
         {/* Footer with gradient */}
         <div className="p-4 border-t border-slate-700/30">
-          <div className="text-center">
-            <p className="text-xs text-slate-500">
-              Düşüncelerini görselleştir • Hedeflerini takip et
-            </p>
+          <div className="space-y-3">
+            {/* Import/Export buttons */}
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onExport}
+                className="flex-1 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 hover:text-white rounded-lg transition-all duration-200"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Export
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setImporting(!importing)}
+                className="flex-1 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 hover:text-white rounded-lg transition-all duration-200"
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Import
+              </Button>
+            </div>
+            
+            {/* Import text area */}
+            {importing && (
+              <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
+                <textarea
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder="JSON verisini buraya yapıştırın..."
+                  className="w-full h-24 bg-slate-700/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 resize-none"
+                />
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    size="sm"
+                    onClick={handleImport}
+                    disabled={!importText.trim()}
+                    className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 rounded-lg"
+                  >
+                    <ClipboardPaste className="h-4 w-4 mr-2" />
+                    İçe Aktar
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {setImporting(false); setImportText('')}}
+                    className="rounded-lg bg-slate-700/50 hover:bg-red-500/20 hover:text-red-400"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            <div className="text-center">
+              <p className="text-xs text-slate-500">
+                Düşüncelerini görselleştir • Hedeflerini takip et
+              </p>
+            </div>
           </div>
         </div>
       </div>

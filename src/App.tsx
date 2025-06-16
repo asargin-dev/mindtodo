@@ -79,6 +79,110 @@ function App() {
 
   const toggleSidebar = () => setSidebarCollapsed((c) => !c)
 
+  // Export all data
+  const exportData = () => {
+    try {
+      const exportData = {
+        maps: maps,
+        data: {} as Record<string, any>
+      }
+      
+      // Collect all map data
+      maps.forEach(map => {
+        const nodesKey = `brainmap-${map.id}-nodes`
+        const connectionsKey = `brainmap-${map.id}-connections`
+        
+        const nodes = localStorage.getItem(nodesKey)
+        const connections = localStorage.getItem(connectionsKey)
+        
+        if (nodes) exportData.data[nodesKey] = JSON.parse(nodes)
+        if (connections) exportData.data[connectionsKey] = JSON.parse(connections)
+      })
+      
+      const dataStr = JSON.stringify(exportData, null, 2)
+      
+      // Copy to clipboard
+      navigator.clipboard.writeText(dataStr).then(() => {
+        alert('✅ Veriler panoya kopyalandı! Başka tarayıcıda yapıştırabilirsiniz.')
+      }).catch(() => {
+        // Fallback: Download as file
+        const blob = new Blob([dataStr], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `mindtodos-export-${new Date().toISOString().split('T')[0]}.json`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        alert('📁 Veriler dosya olarak indirildi!')
+      })
+      
+    } catch (error) {
+      console.error('Export failed:', error)
+      alert('❌ Export sırasında hata oluştu!')
+    }
+  }
+  
+  // Import data
+  const importData = async (jsonData: string): Promise<boolean> => {
+    try {
+      const data = JSON.parse(jsonData)
+      
+      // Validate data structure
+      if (!data.maps || !Array.isArray(data.maps) || !data.data) {
+        alert('❌ Geçersiz veri formatı!')
+        return false
+      }
+      
+      // Confirm import
+      const confirmMessage = `${data.maps.length} adet MindTodo içe aktarılacak. Mevcut veriler korunacak. Devam edilsin mi?`
+      if (!confirm(confirmMessage)) {
+        return false
+      }
+      
+      // Import maps metadata
+      const newMaps = data.maps.map((map: MapMeta) => ({
+        ...map,
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9) // New unique ID
+      }))
+      
+      // Import each map's data with new IDs
+      for (let i = 0; i < data.maps.length; i++) {
+        const oldMap = data.maps[i]
+        const newMap = newMaps[i]
+        
+        const oldNodesKey = `brainmap-${oldMap.id}-nodes`
+        const oldConnectionsKey = `brainmap-${oldMap.id}-connections`
+        const newNodesKey = `brainmap-${newMap.id}-nodes`
+        const newConnectionsKey = `brainmap-${newMap.id}-connections`
+        
+        if (data.data[oldNodesKey]) {
+          localStorage.setItem(newNodesKey, JSON.stringify(data.data[oldNodesKey]))
+        }
+        if (data.data[oldConnectionsKey]) {
+          localStorage.setItem(newConnectionsKey, JSON.stringify(data.data[oldConnectionsKey]))
+        }
+      }
+      
+      // Update maps state
+      setMaps(prev => [...prev, ...newMaps])
+      
+      // Select first imported map
+      if (newMaps.length > 0) {
+        setSelectedMapId(newMaps[0].id)
+      }
+      
+      alert(`✅ ${newMaps.length} adet MindTodo başarıyla içe aktarıldı!`)
+      return true
+      
+    } catch (error) {
+      console.error('Import failed:', error)
+      alert('❌ Import sırasında hata oluştu! JSON formatını kontrol edin.')
+      return false
+    }
+  }
+
   return (
     <div className="app flex">
       <Sidebar
@@ -87,6 +191,8 @@ function App() {
         onSelect={selectMap}
         onCreate={createMap}
         onDelete={deleteMap}
+        onExport={exportData}
+        onImport={importData}
         getProgress={getMapProgress}
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebar}
