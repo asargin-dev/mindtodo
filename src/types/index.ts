@@ -21,3 +21,8 @@ export interface Connection {
   sourceId: string;
   targetId: string;
 }
+
+export interface MapMeta {
+  id: string;
+  name: string;
+}

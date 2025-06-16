@@ -28,5 +28,11 @@ export interface Connection {
   targetId: string;
 }
 
+// After Connection type, add MapMeta interface
+export interface MapMeta {
+  id: string;
+  name: string;
+}
+
 // Alias for TodoItem for compatibility with existing code
 export type Todo = TodoItem;

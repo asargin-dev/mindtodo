@@ -33,6 +33,20 @@ export function NodeComponent({
   
   // State for confetti
   const [showConfetti, setShowConfetti] = useState(false);
+  const [confettiParticles, setConfettiParticles] = useState<Array<{
+    id: number;
+    type: 'circle' | 'square' | 'triangle' | 'star';
+    color: string;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    rotation: number;
+    rotationSpeed: number;
+    size: number;
+    gravity: number;
+    life: number;
+  }>>([]);
   
   // Calculate node size based on todos count or connected nodes
   const todoCount = node.todos?.length || 0;
@@ -52,12 +66,166 @@ export function NodeComponent({
   
   // Show confetti when root node is completed
   useEffect(() => {
-    if (isRootNode && fillPercentage >= 100 && connectedNodesTodos.total > 0) {
+    const shouldShowConfetti = isRootNode 
+      ? (fillPercentage >= 100 && connectedNodesTodos.total > 0)
+      : (fillPercentage >= 100 && todoCount > 0);
+      
+    if (shouldShowConfetti) {
+      // Create confetti particles with physics
+      const particleCount = isRootNode ? 60 : 40; // More particles for root nodes
+      const particles = Array.from({ length: particleCount }, (_, i) => {
+        // Create radial explosion pattern
+        const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
+        const velocity = Math.random() * 6 + 3; // Slightly slower for more control
+        const radius = baseSize / 2; // Use actual node radius
+        
+        const colors = [
+          '#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', 
+          '#FECA57', '#FF9FF3', '#54A0FF', '#5F27CD', '#00D2D3',
+          '#FF9F43', '#10AC84', '#EE5A24', '#0984E3', '#A29BFE'
+        ];
+        
+        return {
+          id: i,
+          type: ['circle', 'square', 'triangle', 'star'][Math.floor(Math.random() * 4)] as any,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          x: 50, // Start from node center (percentage)
+          y: 50, // Start from node center (percentage)
+          vx: Math.cos(angle) * velocity,
+          vy: Math.sin(angle) * velocity,
+          rotation: Math.random() * 360,
+          rotationSpeed: (Math.random() - 0.5) * 10,
+          size: Math.random() * 8 + 4,
+          gravity: Math.random() * 0.3 + 0.1,
+          life: 1.0,
+        };
+      });
+      
+      setConfettiParticles(particles);
       setShowConfetti(true);
-      const timer = setTimeout(() => setShowConfetti(false), 5000);
-      return () => clearTimeout(timer);
+      
+      // Animate particles
+      const animateParticles = () => {
+        setConfettiParticles(prev => 
+          prev.map(particle => ({
+            ...particle,
+            x: particle.x + particle.vx,
+            y: particle.y + particle.vy,
+            vx: particle.vx * 0.98, // Air resistance
+            vy: particle.vy + particle.gravity, // Gravity
+            rotation: particle.rotation + particle.rotationSpeed,
+            life: particle.life - 0.02
+          })).filter(particle => {
+            // Keep particles only if they're alive and within circular bounds
+            const centerX = 50;
+            const centerY = 50;
+            const maxDistance = 150; // Maximum distance from center
+            const distance = Math.sqrt((particle.x - centerX) ** 2 + (particle.y - centerY) ** 2);
+            return particle.life > 0 && distance < maxDistance;
+          })
+        );
+      };
+      
+      const interval = setInterval(animateParticles, 16); // 60fps
+      const timer = setTimeout(() => {
+        setShowConfetti(false);
+        setConfettiParticles([]);
+        clearInterval(interval);
+      }, 4000);
+      
+      return () => {
+        clearTimeout(timer);
+        clearInterval(interval);
+      };
     }
-  }, [isRootNode, fillPercentage, connectedNodesTodos.total]);
+  }, [isRootNode, fillPercentage, connectedNodesTodos.total, todoCount]);
+
+  // Render individual confetti particle
+  const renderParticle = (particle: typeof confettiParticles[0]) => {
+    const opacity = Math.max(0, particle.life);
+    
+    if (particle.type === 'circle') {
+      return (
+        <div
+          key={particle.id}
+          className="absolute rounded-full"
+          style={{
+            left: `${particle.x}%`,
+            top: `${particle.y}%`,
+            width: `${particle.size}px`,
+            height: `${particle.size}px`,
+            backgroundColor: particle.color,
+            transform: `rotate(${particle.rotation}deg)`,
+            opacity,
+            boxShadow: `0 0 ${particle.size}px ${particle.color}40`,
+          }}
+        />
+      );
+    }
+    
+    if (particle.type === 'square') {
+      return (
+        <div
+          key={particle.id}
+          className="absolute"
+          style={{
+            left: `${particle.x}%`,
+            top: `${particle.y}%`,
+            width: `${particle.size}px`,
+            height: `${particle.size}px`,
+            backgroundColor: particle.color,
+            transform: `rotate(${particle.rotation}deg)`,
+            opacity,
+            borderRadius: '2px',
+          }}
+        />
+      );
+    }
+    
+    if (particle.type === 'triangle') {
+      return (
+        <div
+          key={particle.id}
+          className="absolute"
+          style={{
+            left: `${particle.x}%`,
+            top: `${particle.y}%`,
+            width: 0,
+            height: 0,
+            borderLeft: `${particle.size / 2}px solid transparent`,
+            borderRight: `${particle.size / 2}px solid transparent`,
+            borderBottom: `${particle.size}px solid ${particle.color}`,
+            transform: `rotate(${particle.rotation}deg)`,
+            opacity,
+            filter: `drop-shadow(0 0 ${particle.size / 2}px ${particle.color}60)`,
+          }}
+        />
+      );
+    }
+    
+    if (particle.type === 'star') {
+      return (
+        <div
+          key={particle.id}
+          className="absolute text-center font-bold"
+          style={{
+            left: `${particle.x}%`,
+            top: `${particle.y}%`,
+            fontSize: `${particle.size}px`,
+            color: particle.color,
+            transform: `rotate(${particle.rotation}deg)`,
+            opacity,
+            textShadow: `0 0 ${particle.size / 2}px ${particle.color}`,
+            lineHeight: '1',
+          }}
+        >
+          ⭐
+        </div>
+      );
+    }
+    
+    return null;
+  };
 
   return (
     <div
@@ -80,23 +248,28 @@ export function NodeComponent({
     >
       {/* Show confetti when completed */}
       {showConfetti && (
-        <div className="absolute -top-20 -left-20 -right-20 -bottom-20 pointer-events-none z-50">
-          <div className="absolute inset-0 animate-confetti-explosion">
-            {Array.from({ length: 50 }).map((_, i) => (
-              <div 
-                key={i}
-                className="absolute rounded-full animate-confetti"
-                style={{
-                  left: `${Math.random() * 100}%`,
-                  top: `${Math.random() * 100}%`,
-                  backgroundColor: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'][Math.floor(Math.random() * 6)],
-                  width: `${Math.random() * 10 + 5}px`,
-                  height: `${Math.random() * 10 + 5}px`,
-                  animationDelay: `${Math.random() * 2}s`,
-                  animationDuration: `${Math.random() * 3 + 2}s`,
-                }}
-              />
-            ))}
+        <div 
+          className="absolute pointer-events-none z-50 overflow-visible"
+          style={{
+            left: `-${baseSize/2}px`,
+            top: `-${baseSize/2}px`,
+            width: `${baseSize * 2}px`,
+            height: `${baseSize * 2}px`,
+            borderRadius: '50%',
+          }}
+        >
+          {confettiParticles.map(renderParticle)}
+          
+          {/* Victory burst effect - centered on node */}
+          <div className="absolute inset-0">
+            <div 
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full animate-ping"
+              style={{
+                width: `${baseSize}px`,
+                height: `${baseSize}px`,
+                background: 'radial-gradient(circle, rgba(255,215,0,0.3) 0%, rgba(255,107,107,0.2) 50%, rgba(138,43,226,0.1) 100%)'
+              }}
+            />
           </div>
         </div>
       )}

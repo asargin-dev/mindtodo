@@ -10,7 +10,11 @@ interface Position {
   y: number;
 }
 
-export function BrainMap() {
+interface BrainMapProps {
+  mapId: string;
+}
+
+export function BrainMap({ mapId }: BrainMapProps) {
   const [nodes, setNodes] = useState<TodoNode[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedNode, setSelectedNode] = useState<TodoNode | null>(null);
@@ -27,11 +31,16 @@ export function BrainMap() {
   const [isPanning, setIsPanning] = useState(false);
   const [wasDragging, setWasDragging] = useState(false);
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [mousePosition, setMousePosition] = useState<Position>({ x: 0, y: 0 });
+
+  // Helper keys scoped per map
+  const nodesKey = `brainmap-${mapId}-nodes`;
+  const connectionsKey = `brainmap-${mapId}-connections`;
 
   // Load nodes and connections from localStorage on initial render
   useEffect(() => {
-    const savedNodes = localStorage.getItem('brainmap-nodes');
-    const savedConnections = localStorage.getItem('brainmap-connections');
+    const savedNodes = localStorage.getItem(nodesKey);
+    const savedConnections = localStorage.getItem(connectionsKey);
     
     if (savedNodes) {
       try {
@@ -55,17 +64,17 @@ export function BrainMap() {
         console.error('Error parsing saved connections:', e);
       }
     }
-  }, []);
+  }, [mapId]);
 
   // Save to localStorage whenever nodes or connections change
   useEffect(() => {
     if (nodes.length > 0) {
-      localStorage.setItem('brainmap-nodes', JSON.stringify(nodes));
+      localStorage.setItem(nodesKey, JSON.stringify(nodes));
     }
     if (connections.length > 0) {
-      localStorage.setItem('brainmap-connections', JSON.stringify(connections));
+      localStorage.setItem(connectionsKey, JSON.stringify(connections));
     }
-  }, [nodes, connections]);
+  }, [nodes, connections, nodesKey, connectionsKey]);
 
   const createRootNode = (title: string) => {
     const newNode: TodoNode = {
@@ -187,8 +196,16 @@ export function BrainMap() {
     }
   };
 
-  // Handle mouse move for dragging and panning
+  // Handle mouse move for dragging, panning, and connection tracking
   const handleMouseMove = (event: React.MouseEvent) => {
+    // Update mouse position for temp connections
+    if (canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const mouseX = (event.clientX - rect.left - pan.x) / zoom;
+      const mouseY = (event.clientY - rect.top - pan.y) / zoom;
+      setMousePosition({ x: mouseX, y: mouseY });
+    }
+    
     if (isDragging && dragNode) {
       // Mouse hareket ettiğinde wasDragging'i true yap
       setWasDragging(true);
@@ -418,10 +435,10 @@ export function BrainMap() {
     setNodes([rootNode]);
     
     // Update localStorage with the reset state
-    localStorage.removeItem('brainmap-nodes');
-    localStorage.removeItem('brainmap-connections');
-    localStorage.setItem('brainmap-nodes', JSON.stringify([rootNode]));
-    localStorage.setItem('brainmap-connections', JSON.stringify([]));
+    localStorage.removeItem(nodesKey);
+    localStorage.removeItem(connectionsKey);
+    localStorage.setItem(nodesKey, JSON.stringify([rootNode]));
+    localStorage.setItem(connectionsKey, JSON.stringify([]));
     
     console.log('Brain map reset!', rootNode);
   };
@@ -457,71 +474,85 @@ export function BrainMap() {
 
   // Render connections as SVG lines
   const renderConnections = () => {
-    return connections.map(conn => {
-      const sourceNode = nodes.find(node => node.id === conn.sourceId);
-      const targetNode = nodes.find(node => node.id === conn.targetId);
-      
-      if (!sourceNode || !targetNode) return null;
-      
-      // Root node için özel boyut hesaplama
-      const isSourceRoot = sourceNode.id === 'root' || sourceNode.title === 'My Tasks' || sourceNode.title === 'Work' || sourceNode.title === 'Personal';
-      const isTargetRoot = targetNode.id === 'root' || targetNode.title === 'My Tasks' || targetNode.title === 'Work' || targetNode.title === 'Personal';
-      
-      // Boyutları NodeComponent ile senkronize et
-      const sourceSize = isSourceRoot 
-        ? Math.max(180, 180 + ((sourceNode.todos?.length || 0) * 10))
-        : Math.max(120, 120 + ((sourceNode.todos?.length || 0) * 10));
-      
-      const targetSize = isTargetRoot 
-        ? Math.max(180, 180 + ((targetNode.todos?.length || 0) * 10))
-        : Math.max(120, 120 + ((targetNode.todos?.length || 0) * 10));
-      
-      // Calculate center points
-      const startX = sourceNode.position.x + (sourceSize / 2);
-      const startY = sourceNode.position.y + (sourceSize / 2);
-      const endX = targetNode.position.x + (targetSize / 2);
-      const endY = targetNode.position.y + (targetSize / 2);
-      
-      // Calculate direction vector
-      const dx = endX - startX;
-      const dy = endY - startY;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      
-      // Daha hassas radius hesaplaması
-      const sourceRadius = (sourceSize / 2) - 2; // 2px offset ekle
-      const targetRadius = (targetSize / 2) - 2; // 2px offset ekle
-      
-      // Adjust start and end points with more precise calculation
-      const startPointX = startX + (dx / distance) * sourceRadius;
-      const startPointY = startY + (dy / distance) * sourceRadius;
-      const endPointX = endX - (dx / distance) * targetRadius;
-      const endPointY = endY - (dy / distance) * targetRadius;
-      
-      return (
-        <svg 
-          key={conn.id} 
-          style={{ 
-            position: 'absolute', 
-            top: 0, 
-            left: 0, 
-            width: '100%', 
-            height: '100%',
-            pointerEvents: 'none',
-            zIndex: 1
-          }}
-        >
-          <line
-            x1={startPointX}
-            y1={startPointY}
-            x2={endPointX}
-            y2={endPointY}
-            stroke="#94a3b8"
-            strokeWidth={2}
-            strokeDasharray={connectingMode ? "5,5" : "none"}
-          />
-        </svg>
-      );
-    });
+    if (connections.length === 0) return null;
+    
+    return (
+      <svg 
+        className="absolute inset-0 pointer-events-none"
+        style={{ 
+          width: '100%', 
+          height: '100%',
+          overflow: 'visible',
+          zIndex: 1
+        }}
+      >
+        {connections.map(conn => {
+          const sourceNode = nodes.find(node => node.id === conn.sourceId);
+          const targetNode = nodes.find(node => node.id === conn.targetId);
+          
+          if (!sourceNode || !targetNode) return null;
+          
+          // Root node için özel boyut hesaplama
+          const isSourceRoot = sourceNode.id === 'root' || sourceNode.title === 'My Tasks' || sourceNode.title === 'Work' || sourceNode.title === 'Personal';
+          const isTargetRoot = targetNode.id === 'root' || targetNode.title === 'My Tasks' || targetNode.title === 'Work' || targetNode.title === 'Personal';
+          
+          // Calculate connected nodes count for size calculation
+          const sourceConnectedCount = connections.filter(
+            conn => conn.sourceId === sourceNode.id || conn.targetId === sourceNode.id
+          ).length;
+          const targetConnectedCount = connections.filter(
+            conn => conn.sourceId === targetNode.id || conn.targetId === targetNode.id
+          ).length;
+          
+          // Boyutları NodeComponent ile senkronize et
+          const sourceSize = isSourceRoot 
+            ? Math.max(180, 180 + (sourceConnectedCount * 20))
+            : Math.max(120, 120 + ((sourceNode.todos?.length || 0) * 10));
+          
+          const targetSize = isTargetRoot 
+            ? Math.max(180, 180 + (targetConnectedCount * 20))
+            : Math.max(120, 120 + ((targetNode.todos?.length || 0) * 10));
+          
+          // Calculate center points
+          const startX = sourceNode.position.x + (sourceSize / 2);
+          const startY = sourceNode.position.y + (sourceSize / 2);
+          const endX = targetNode.position.x + (targetSize / 2);
+          const endY = targetNode.position.y + (targetSize / 2);
+          
+          // Calculate direction vector
+          const dx = endX - startX;
+          const dy = endY - startY;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          // Daha hassas radius hesaplaması
+          const sourceRadius = (sourceSize / 2) - 2; // 2px offset ekle
+          const targetRadius = (targetSize / 2) - 2; // 2px offset ekle
+          
+          // Adjust start and end points with more precise calculation
+          const startPointX = startX + (dx / distance) * sourceRadius;
+          const startPointY = startY + (dy / distance) * sourceRadius;
+          const endPointX = endX - (dx / distance) * targetRadius;
+          const endPointY = endY - (dy / distance) * targetRadius;
+          
+          return (
+            <line
+              key={conn.id}
+              x1={startPointX}
+              y1={startPointY}
+              x2={endPointX}
+              y2={endPointY}
+              stroke="#60a5fa"
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeDasharray={connectingMode ? "5,5" : "none"}
+              style={{
+                filter: 'drop-shadow(0 2px 4px rgba(96, 165, 250, 0.3))'
+              }}
+            />
+          );
+        })}
+      </svg>
+    );
   };
 
   // Temporary line when in connecting mode
@@ -531,16 +562,21 @@ export function BrainMap() {
     const sourceNode = nodes.find(node => node.id === connectingMode);
     if (!sourceNode) return null;
     
-    const sourceSize = Math.min(1.8, 1 + (sourceNode.todos.length * 0.1)) * 120;
+    const isSourceRoot = sourceNode.id === 'root' || sourceNode.title === 'My Tasks' || sourceNode.title === 'Work' || sourceNode.title === 'Personal';
+    const sourceConnectedCount = connections.filter(
+      conn => conn.sourceId === sourceNode.id || conn.targetId === sourceNode.id
+    ).length;
+    
+    const sourceSize = isSourceRoot 
+      ? Math.max(180, 180 + (sourceConnectedCount * 20))
+      : Math.max(120, 120 + ((sourceNode.todos?.length || 0) * 10));
+      
     const startX = sourceNode.position.x + sourceSize / 2;
     const startY = sourceNode.position.y + sourceSize / 2;
     
-    // Get current mouse position for the end of the temp connection
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return null;
-    
-    const mouseX = rect.left + rect.width / 2; 
-    const mouseY = rect.top + rect.height / 2; 
+    // Use actual mouse position for temp connection endpoint
+    const mouseX = mousePosition.x;
+    const mouseY = mousePosition.y;
     
     // Calculate direction vector
     const dx = mouseX - startX;
@@ -554,13 +590,11 @@ export function BrainMap() {
     
     return (
       <svg 
+        className="absolute inset-0 pointer-events-none"
         style={{ 
-          position: 'absolute', 
-          top: 0, 
-          left: 0, 
           width: '100%', 
           height: '100%',
-          pointerEvents: 'none',
+          overflow: 'visible',
           zIndex: 1
         }}
       >
@@ -569,9 +603,13 @@ export function BrainMap() {
           y1={startPointY}
           x2={mouseX}
           y2={mouseY}
-          stroke="#94a3b8"
-          strokeWidth={2}
+          stroke="#60a5fa"
+          strokeWidth={3}
+          strokeLinecap="round"
           strokeDasharray="5,5"
+          style={{
+            filter: 'drop-shadow(0 2px 4px rgba(96, 165, 250, 0.3))'
+          }}
         />
       </svg>
     );
