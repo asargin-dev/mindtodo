@@ -77,7 +77,6 @@ export function NodeComponent({
         // Create radial explosion pattern
         const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
         const velocity = Math.random() * 6 + 3; // Slightly slower for more control
-        const radius = baseSize / 2; // Use actual node radius
         
         const colors = [
           '#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', 

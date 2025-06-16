@@ -1,5 +1,5 @@
 import { BrainMap } from './components/BrainMap'
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MapMeta, TodoNode, TodoItem } from './types'
 import { Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'

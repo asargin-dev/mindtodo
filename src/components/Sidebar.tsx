@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { MapMeta } from '@/types'
-import { Plus, X, Menu, Brain, Trash2, Check, Download, Upload, Copy, ClipboardPaste } from 'lucide-react'
+import { Plus, X, Brain, Trash2, Check, Download, Upload, ClipboardPaste } from 'lucide-react'
 import { Button } from './ui/button'
 
 interface SidebarProps {
