@@ -1,24 +1,40 @@
 import { BrainMap } from './components/BrainMap'
-import { useEffect, useState } from 'react'
-import { MapMeta, TodoNode, TodoItem } from './types'
+import { useCallback, useEffect, useState } from 'react'
+import { MapMeta, TodoNode } from './types'
 import { Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'
 import './App.css'
 
 const MAPS_META_KEY = 'mindtodo-maps-meta'
 
+function isRootNode(node: TodoNode) {
+  if (node.isRoot !== undefined) {
+    return node.isRoot
+  }
+  return node.id === 'root' || ['My Tasks', 'Work', 'Personal'].includes(node.title)
+}
+
 function getMapProgress(mapId: string): number {
   try {
     const nodesRaw = localStorage.getItem(`brainmap-${mapId}-nodes`)
     if (!nodesRaw) return 0
     const nodes = JSON.parse(nodesRaw) as TodoNode[]
-    let total = 0
-    let completed = 0
-    nodes.forEach((node) => {
-      total += node.todos?.length || 0
-      completed += (node.todos?.filter((t: TodoItem) => t.completed).length) || 0
+
+    const hasExplicitRoot = nodes.some((node) => isRootNode(node))
+
+    const trackableNodes = nodes.filter((node, index) => {
+      if (isRootNode(node)) {
+        return false
+      }
+      if (!hasExplicitRoot && index === 0) {
+        return false
+      }
+      return true
     })
-    return total > 0 ? (completed / total) * 100 : 0
+    if (trackableNodes.length === 0) return 0
+
+    const successfulNodes = trackableNodes.filter((node) => node.status === 'success').length
+    return (successfulNodes / trackableNodes.length) * 100
   } catch (e) {
     console.error('Progress calc error', e)
     return 0
@@ -29,6 +45,7 @@ function App() {
   const [maps, setMaps] = useState<MapMeta[]>([])
   const [selectedMapId, setSelectedMapId] = useState<string>('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  const selectedMap = maps.find((map) => map.id === selectedMapId)
 
   // Load maps meta on mount
   useEffect(() => {
@@ -78,6 +95,19 @@ function App() {
   const selectMap = (id: string) => setSelectedMapId(id)
 
   const toggleSidebar = () => setSidebarCollapsed((c) => !c)
+
+  const handleRootTitleChange = useCallback((title: string) => {
+    if (!selectedMapId) return
+    const normalizedTitle = title.trim()
+    setMaps((prevMaps) =>
+      prevMaps.map((map) => {
+        if (map.id !== selectedMapId) return map
+        const nextName = normalizedTitle.length > 0 ? normalizedTitle : map.name
+        if (map.name === nextName) return map
+        return { ...map, name: nextName }
+      })
+    )
+  }, [selectedMapId])
 
   // Export all data
   const exportData = () => {
@@ -230,7 +260,12 @@ function App() {
           </div>
         )}
         {selectedMapId ? (
-          <BrainMap key={selectedMapId} mapId={selectedMapId} />
+          <BrainMap
+            key={selectedMapId}
+            mapId={selectedMapId}
+            mapName={selectedMap?.name ?? 'My Tasks'}
+            onRootTitleChange={handleRootTitleChange}
+          />
         ) : (
           <div className="h-screen w-full flex items-center justify-center text-gray-500">
             Henüz MindTodo yok. Soldan ekleyebilirsiniz.

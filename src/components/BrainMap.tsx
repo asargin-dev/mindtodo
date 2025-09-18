@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Minus, Maximize } from 'lucide-react';
 import { Button } from './ui/button';
-import { TodoNode, Connection, TodoItem } from '../types';
+import { TodoNode, Connection, NodeStatus } from '../types';
 import { NodeComponent } from './NodeComponent';
 import { TodoDialog } from './TodoDialog';
 
@@ -12,9 +12,72 @@ interface Position {
 
 interface BrainMapProps {
   mapId: string;
+  mapName: string;
+  onRootTitleChange?: (title: string) => void;
 }
 
-export function BrainMap({ mapId }: BrainMapProps) {
+const ROOT_TITLES = new Set(['My Tasks', 'Work', 'Personal']);
+const DEFAULT_STATUS: NodeStatus = 'pending';
+
+const isRootNode = (node: TodoNode) => {
+  if (typeof node.isRoot === 'boolean') {
+    return node.isRoot;
+  }
+  return node.id === 'root' || ROOT_TITLES.has(node.title);
+};
+
+const deriveStatusFromLegacyTodos = (legacyTodos: any[]): NodeStatus => {
+  if (!Array.isArray(legacyTodos) || legacyTodos.length === 0) {
+    return DEFAULT_STATUS;
+  }
+
+  const allCompleted = legacyTodos.every((todo) => !!todo?.completed);
+  return allCompleted ? 'success' : DEFAULT_STATUS;
+};
+
+const normalizeNode = (node: any): TodoNode => {
+  const status: NodeStatus =
+    node?.status === 'success' || node?.status === 'failed' || node?.status === 'pending'
+      ? node.status
+      : deriveStatusFromLegacyTodos(node?.todos);
+
+  const isRoot =
+    typeof node?.isRoot === 'boolean'
+      ? node.isRoot
+      : node?.id === 'root' || ROOT_TITLES.has(node?.title);
+
+  return {
+    id: node?.id?.toString() ?? Date.now().toString(),
+    title: typeof node?.title === 'string' ? node.title : 'Untitled',
+    position:
+      node?.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
+        ? node.position
+        : { x: 0, y: 0 },
+    status,
+    isRoot,
+  };
+};
+
+const normalizeNodes = (rawNodes: any[]): TodoNode[] => {
+  const normalized = rawNodes.map((node) => normalizeNode(node));
+
+  if (!normalized.some((node) => node.isRoot)) {
+    if (normalized.length > 0) {
+      normalized[0] = { ...normalized[0], isRoot: true };
+    }
+  }
+
+  return normalized;
+};
+
+interface StatusSummary {
+  success: number;
+  failed: number;
+  pending: number;
+  total: number;
+}
+
+export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   const [nodes, setNodes] = useState<TodoNode[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedNode, setSelectedNode] = useState<TodoNode | null>(null);
@@ -33,6 +96,28 @@ export function BrainMap({ mapId }: BrainMapProps) {
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [mousePosition, setMousePosition] = useState<Position>({ x: 0, y: 0 });
 
+  const mapNameRef = useRef(mapName);
+  useEffect(() => {
+    mapNameRef.current = mapName;
+  }, [mapName]);
+
+  const getRootTitle = (overrideTitle?: string) => {
+    const trimmedOverride = overrideTitle?.trim();
+    if (trimmedOverride && trimmedOverride.length > 0) {
+      return trimmedOverride;
+    }
+
+    const rawMapName = mapNameRef.current;
+    const candidateMapName =
+      typeof rawMapName === 'string' ? rawMapName : rawMapName != null ? String(rawMapName) : '';
+    const trimmedMapName = candidateMapName.trim();
+    if (trimmedMapName.length > 0) {
+      return trimmedMapName;
+    }
+
+    return 'My Tasks';
+  };
+
   // Helper keys scoped per map
   const nodesKey = `brainmap-${mapId}-nodes`;
   const connectionsKey = `brainmap-${mapId}-connections`;
@@ -45,15 +130,33 @@ export function BrainMap({ mapId }: BrainMapProps) {
     if (savedNodes) {
       try {
         const parsedNodes = JSON.parse(savedNodes);
-        setNodes(parsedNodes);
+        const normalized = normalizeNodes(parsedNodes);
+        if (normalized.length > 0) {
+          setNodes(normalized);
+
+          if (onRootTitleChange) {
+            const rootCandidate = normalized.find((node: TodoNode) => node.isRoot ?? isRootNode(node));
+            const normalizedRootTitle = rootCandidate?.title?.trim();
+            const normalizedMapName = mapName?.trim();
+
+            if (
+              normalizedRootTitle &&
+              (!normalizedMapName || normalizedRootTitle !== normalizedMapName)
+            ) {
+              onRootTitleChange(normalizedRootTitle);
+            }
+          }
+        } else {
+          createRootNode();
+        }
       } catch (e) {
         console.error('Error parsing saved nodes:', e);
         // Hata durumunda otomatik olarak My Tasks oluştur
-        createRootNode('My Tasks');
+        createRootNode();
       }
     } else {
       // Kayıtlı node yoksa otomatik olarak My Tasks oluştur
-      createRootNode('My Tasks');
+      createRootNode();
     }
     
     if (savedConnections) {
@@ -64,7 +167,7 @@ export function BrainMap({ mapId }: BrainMapProps) {
         console.error('Error parsing saved connections:', e);
       }
     }
-  }, [mapId]);
+  }, [mapId, onRootTitleChange]);
 
   // Save to localStorage whenever nodes or connections change
   useEffect(() => {
@@ -76,15 +179,18 @@ export function BrainMap({ mapId }: BrainMapProps) {
     }
   }, [nodes, connections, nodesKey, connectionsKey]);
 
-  const createRootNode = (title: string) => {
+  const createRootNode = (overrideTitle?: string) => {
+    const rootTitle = getRootTitle(overrideTitle);
     const newNode: TodoNode = {
       id: Date.now().toString(),
-      title,
+      title: rootTitle,
       position: { x: window.innerWidth / 2 - 60, y: window.innerHeight / 2 - 60 },
-      todos: []
+      status: DEFAULT_STATUS,
+      isRoot: true,
     };
     
     setNodes([newNode]);
+    return newNode;
   };
 
   const addNode = (parentId: string) => {
@@ -102,7 +208,8 @@ export function BrainMap({ mapId }: BrainMapProps) {
         x: parentNode.position.x + offset * Math.cos(angle),
         y: parentNode.position.y + offset * Math.sin(angle)
       },
-      todos: []
+      status: DEFAULT_STATUS,
+      isRoot: false,
     };
     
     // Create a connection from parent to new node
@@ -155,7 +262,7 @@ export function BrainMap({ mapId }: BrainMapProps) {
     }
 
     // Check if this is a root node
-    const isRootNode = node.id === 'root' || node.title === 'My Tasks' || node.title === 'Work' || node.title === 'Personal';
+    const isRoot = isRootNode(node);
 
     // If we're in connecting mode, handle connection logic
     if (connectingMode) {
@@ -188,7 +295,7 @@ export function BrainMap({ mapId }: BrainMapProps) {
       const target = event.target as HTMLElement;
       if (!target.closest('button')) {
         // Only open todo dialog if it's not a root node
-        if (!isRootNode) {
+        if (!isRoot) {
           setSelectedNode(node);
           setShowTodoDialog(true);
         }
@@ -299,6 +406,23 @@ export function BrainMap({ mapId }: BrainMapProps) {
     }
   };
 
+  const getNodeSize = (node: TodoNode, connectedCount: number) => {
+    const baseSize = isRootNode(node)
+      ? Math.max(220, 200 + connectedCount * 22)
+      : 140;
+
+    const title = node.title ?? '';
+    const normalizedTitle = title.trim();
+    const totalLength = normalizedTitle.length;
+    const longestWord = normalizedTitle.split(/\s+/).reduce((max, word) => Math.max(max, word.length), 0);
+
+    const lengthBoost = Math.max(totalLength - 18, 0) * 2.5;
+    const wordBoost = Math.max(longestWord - 12, 0) * 6;
+    const combinedBoost = Math.min(220, lengthBoost + wordBoost);
+
+    return Math.min(420, baseSize + combinedBoost);
+  };
+
   const handleStartDrag = (node: TodoNode, event: React.MouseEvent) => {
     event.stopPropagation();
     // Mouse hareket etmeye başlamadan önce wasDragging'i false yap
@@ -382,17 +506,40 @@ export function BrainMap({ mapId }: BrainMapProps) {
   };
 
   const updateNodeTitle = (nodeId: string, newTitle: string) => {
-    setNodes(prev => 
-      prev.map(node => 
-        node.id === nodeId ? { ...node, title: newTitle } : node
-      )
+    const trimmedTitle = newTitle.trim();
+    let rootRenamed = false;
+    let mappedRootTitle: string | null = null;
+
+    setNodes(prev =>
+      prev.map(node => {
+        if (node.id !== nodeId) {
+          return node;
+        }
+
+        const isRoot = node.isRoot ?? isRootNode(node);
+
+        if (isRoot) {
+          rootRenamed = true;
+          const nextTitle = trimmedTitle.length > 0 ? trimmedTitle : getRootTitle();
+          mappedRootTitle = nextTitle;
+          return { ...node, title: nextTitle, isRoot: true };
+        }
+
+        return { ...node, title: trimmedTitle.length > 0 ? trimmedTitle : 'Untitled', isRoot };
+      })
     );
+
+    if (rootRenamed && mappedRootTitle && onRootTitleChange) {
+      onRootTitleChange(mappedRootTitle);
+    }
   };
 
-  const updateNodeTodos = (nodeId: string, todos: TodoItem[]) => {
-    setNodes(prev => 
-      prev.map(node => 
-        node.id === nodeId ? { ...node, todos } : node
+  const updateNodeStatus = (nodeId: string, status: NodeStatus) => {
+    setNodes(prev =>
+      prev.map(node =>
+        node.id === nodeId
+          ? { ...node, status, isRoot: node.isRoot ?? isRootNode(node) }
+          : node
       )
     );
   };
@@ -411,14 +558,16 @@ export function BrainMap({ mapId }: BrainMapProps) {
 
   const resetBrainMap = () => {
     // Create a new root node positioned in the center of the screen
+    const rootTitle = getRootTitle();
     const rootNode: TodoNode = {
       id: Date.now().toString(), // Use timestamp to ensure unique ID
-      title: 'My Tasks',
+      title: rootTitle,
       position: { 
         x: window.innerWidth / 2 - 60, 
         y: window.innerHeight / 2 - 60 
       },
-      todos: []
+      status: DEFAULT_STATUS,
+      isRoot: true,
     };
     
     // Clear all state in a specific order
@@ -441,35 +590,50 @@ export function BrainMap({ mapId }: BrainMapProps) {
     localStorage.setItem(connectionsKey, JSON.stringify([]));
     
     console.log('Brain map reset!', rootNode);
+
+    if (onRootTitleChange) {
+      onRootTitleChange(rootTitle);
+    }
   };
 
-  const calculateAllConnectedTodos = (nodeId: string, visited = new Set<string>()): { completed: number, total: number } => {
-    if (visited.has(nodeId)) return { completed: 0, total: 0 };
+  const calculateStatusSummary = (nodeId: string, visited = new Set<string>()): StatusSummary => {
+    if (visited.has(nodeId)) {
+      return { success: 0, failed: 0, pending: 0, total: 0 };
+    }
+
     visited.add(nodeId);
-    
-    // Get the current node
-    const currentNode = nodes.find(n => n.id === nodeId);
-    if (!currentNode) return { completed: 0, total: 0 };
-    
-    // Initialize counters with current node's todos
-    let totalTodos = currentNode.todos?.length || 0;
-    let completedTodos = currentNode.todos?.filter(todo => todo.completed).length || 0;
-    
-    // Get all connections for this node
+
+    const currentNode = nodes.find((n) => n.id === nodeId);
+    if (!currentNode) {
+      return { success: 0, failed: 0, pending: 0, total: 0 };
+    }
+
+    const summary: StatusSummary = { success: 0, failed: 0, pending: 0, total: 0 };
+
+    summary.total += 1;
+    if (currentNode.status === 'success') {
+      summary.success += 1;
+    } else if (currentNode.status === 'failed') {
+      summary.failed += 1;
+    } else {
+      summary.pending += 1;
+    }
+
     const directConnections = connections
-      .filter(conn => conn.sourceId === nodeId || conn.targetId === nodeId)
-      .map(conn => conn.sourceId === nodeId ? conn.targetId : conn.sourceId);
-      
-    // Recursively get todos from all connected nodes
+      .filter((conn) => conn.sourceId === nodeId || conn.targetId === nodeId)
+      .map((conn) => (conn.sourceId === nodeId ? conn.targetId : conn.sourceId));
+
     for (const connectedNodeId of directConnections) {
       if (!visited.has(connectedNodeId)) {
-        const { total, completed } = calculateAllConnectedTodos(connectedNodeId, visited);
-        totalTodos += total;
-        completedTodos += completed;
+        const childSummary = calculateStatusSummary(connectedNodeId, visited);
+        summary.success += childSummary.success;
+        summary.failed += childSummary.failed;
+        summary.pending += childSummary.pending;
+        summary.total += childSummary.total;
       }
     }
-    
-    return { completed: completedTodos, total: totalTodos };
+
+    return summary;
   };
 
   // Render connections as SVG lines
@@ -491,27 +655,17 @@ export function BrainMap({ mapId }: BrainMapProps) {
           const targetNode = nodes.find(node => node.id === conn.targetId);
           
           if (!sourceNode || !targetNode) return null;
-          
-          // Root node için özel boyut hesaplama
-          const isSourceRoot = sourceNode.id === 'root' || sourceNode.title === 'My Tasks' || sourceNode.title === 'Work' || sourceNode.title === 'Personal';
-          const isTargetRoot = targetNode.id === 'root' || targetNode.title === 'My Tasks' || targetNode.title === 'Work' || targetNode.title === 'Personal';
-          
-          // Calculate connected nodes count for size calculation
+
           const sourceConnectedCount = connections.filter(
-            conn => conn.sourceId === sourceNode.id || conn.targetId === sourceNode.id
+            connection => connection.sourceId === sourceNode.id || connection.targetId === sourceNode.id
           ).length;
+
           const targetConnectedCount = connections.filter(
-            conn => conn.sourceId === targetNode.id || conn.targetId === targetNode.id
+            connection => connection.sourceId === targetNode.id || connection.targetId === targetNode.id
           ).length;
-          
-          // Boyutları NodeComponent ile senkronize et
-          const sourceSize = isSourceRoot 
-            ? Math.max(180, 180 + (sourceConnectedCount * 20))
-            : Math.max(120, 120 + ((sourceNode.todos?.length || 0) * 10));
-          
-          const targetSize = isTargetRoot 
-            ? Math.max(180, 180 + (targetConnectedCount * 20))
-            : Math.max(120, 120 + ((targetNode.todos?.length || 0) * 10));
+
+          const sourceSize = getNodeSize(sourceNode, sourceConnectedCount);
+          const targetSize = getNodeSize(targetNode, targetConnectedCount);
           
           // Calculate center points
           const startX = sourceNode.position.x + (sourceSize / 2);
@@ -562,14 +716,11 @@ export function BrainMap({ mapId }: BrainMapProps) {
     const sourceNode = nodes.find(node => node.id === connectingMode);
     if (!sourceNode) return null;
     
-    const isSourceRoot = sourceNode.id === 'root' || sourceNode.title === 'My Tasks' || sourceNode.title === 'Work' || sourceNode.title === 'Personal';
     const sourceConnectedCount = connections.filter(
       conn => conn.sourceId === sourceNode.id || conn.targetId === sourceNode.id
     ).length;
-    
-    const sourceSize = isSourceRoot 
-      ? Math.max(180, 180 + (sourceConnectedCount * 20))
-      : Math.max(120, 120 + ((sourceNode.todos?.length || 0) * 10));
+
+    const sourceSize = getNodeSize(sourceNode, sourceConnectedCount);
       
     const startX = sourceNode.position.x + sourceSize / 2;
     const startY = sourceNode.position.y + sourceSize / 2;
@@ -621,22 +772,10 @@ export function BrainMap({ mapId }: BrainMapProps) {
       const connectedNodesCount = connections.filter(
         conn => conn.sourceId === node.id || conn.targetId === node.id
       ).length;
-      
-      const isRootNode = node.id === 'root' || node.title === 'My Tasks' || node.title === 'Work' || node.title === 'Personal';
-      
-      let connectedNodesTodos = { completed: 0, total: 0 };
-      
-      if (isRootNode) {
-        // Calculate todos from all connected nodes
-        connectedNodesTodos = calculateAllConnectedTodos(node.id);
-        
-        // Add todos from the root node itself
-        if (node.todos && node.todos.length > 0) {
-          connectedNodesTodos.total += node.todos.length;
-          connectedNodesTodos.completed += node.todos.filter(todo => todo.completed).length;
-        }
-      }
-      
+
+      const statusSummary = isRootNode(node) ? calculateStatusSummary(node.id) : undefined;
+      const nodeSize = getNodeSize(node, connectedNodesCount);
+       
       return (
         <NodeComponent
           key={node.id}
@@ -645,7 +784,8 @@ export function BrainMap({ mapId }: BrainMapProps) {
           isConnecting={connectingMode !== null}
           isDragging={isDragging && dragNode?.id === node.id}
           connectedNodesCount={connectedNodesCount}
-          connectedNodesTodos={connectedNodesTodos}
+          statusSummary={statusSummary}
+          size={nodeSize}
           onClick={(e) => handleNodeClick(e, node)}
           onStartDrag={(node: TodoNode, event: React.MouseEvent) => handleStartDrag(node, event)}
           onAddNode={() => addNode(node.id)}
@@ -759,7 +899,7 @@ export function BrainMap({ mapId }: BrainMapProps) {
             setSelectedNode(null);
           }}
           onUpdateTitle={(title: string) => updateNodeTitle(selectedNode.id, title)}
-          onUpdateTodos={(todos: TodoItem[]) => updateNodeTodos(selectedNode.id, todos)}
+          onUpdateStatus={(status: NodeStatus) => updateNodeStatus(selectedNode.id, status)}
           onDeleteNode={() => deleteNode(selectedNode.id)}
         />
       )}

@@ -6,19 +6,15 @@ export interface Position {
   y: number;
 }
 
-// Todo item interface
-export interface TodoItem {
-  id: string;
-  text: string;
-  completed: boolean;
-}
+export type NodeStatus = 'pending' | 'success' | 'failed';
 
 // Node in the brain map
 export interface TodoNode {
   id: string;
   title: string;
   position: Position;
-  todos: TodoItem[];
+  status: NodeStatus;
+  isRoot?: boolean;
 }
 
 // Connection between nodes
@@ -33,6 +29,3 @@ export interface MapMeta {
   id: string;
   name: string;
 }
-
-// Alias for TodoItem for compatibility with existing code
-export type Todo = TodoItem;

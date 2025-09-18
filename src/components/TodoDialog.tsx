@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Check, Trash, Save } from 'lucide-react';
+import { X, Trash, CheckCircle2, XCircle, Clock3 } from 'lucide-react';
 import { Button } from './ui/button';
-import { TodoNode, TodoItem } from '../types';
+import { TodoNode, NodeStatus } from '../types';
 
 interface TodoDialogProps {
   node: TodoNode;
   onClose: () => void;
   onUpdateTitle: (title: string) => void;
-  onUpdateTodos: (todos: TodoItem[]) => void;
+  onUpdateStatus: (status: NodeStatus) => void;
   onDeleteNode: () => void;
 }
 
@@ -15,38 +15,24 @@ export function TodoDialog({
   node,
   onClose,
   onUpdateTitle,
-  onUpdateTodos,
+  onUpdateStatus,
   onDeleteNode
 }: TodoDialogProps) {
   const [title, setTitle] = useState(node.title);
-  const [todos, setTodos] = useState<TodoItem[]>(node.todos || []);
-  const [newTodoText, setNewTodoText] = useState('');
+  const [status, setStatus] = useState<NodeStatus>(node.status ?? 'pending');
   const dialogRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Check if this is a root node
-  const isRootNode = node.id === 'root' || node.title === 'My Tasks' || node.title === 'Work' || node.title === 'Personal';
-
-  // Focus the input on dialog open
-  useEffect(() => {
-    if (inputRef.current && !isRootNode) {
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 100);
-    }
-  }, [isRootNode]);
-
-  // Save all changes
-  const saveChanges = () => {
-    onUpdateTitle(title);
-    onUpdateTodos(todos);
-  };
+  const isRootNode =
+    typeof node.isRoot === 'boolean'
+      ? node.isRoot
+      : node.id === 'root' || node.title === 'My Tasks' || node.title === 'Work' || node.title === 'Personal';
 
   // Handle closing with save
   const handleClose = () => {
     // Save changes before closing
     onUpdateTitle(title);
-    onUpdateTodos(todos);
+    onUpdateStatus(status);
     onClose();
   };
 
@@ -68,7 +54,8 @@ export function TodoDialog({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dialogRef.current && !dialogRef.current.contains(event.target as Node)) {
-        saveChanges();
+        onUpdateTitle(title);
+        onUpdateStatus(status);
         onClose();
       }
     };
@@ -76,62 +63,10 @@ export function TodoDialog({
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
-      // Fallback save on unmount if not saved already
-      saveChanges();
+      onUpdateTitle(title);
+      onUpdateStatus(status);
     };
-  }, [title, todos]);
-
-  const handleFormClick = (e: React.MouseEvent) => {
-    // Always stop event propagation completely for any clicks inside the form
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleAddTodo = (e: React.FormEvent) => {
-    // Make sure we fully stop all event behavior
-    e.preventDefault();
-    e.stopPropagation();
-    
-    if (!newTodoText.trim()) return;
-
-    const newTodo: TodoItem = {
-      id: Date.now().toString(),
-      text: newTodoText.trim(),
-      completed: false
-    };
-
-    const updatedTodos = [...todos, newTodo];
-    
-    // Update local state
-    setTodos(updatedTodos);
-    setNewTodoText('');
-    
-    // Immediately save to parent component
-    onUpdateTodos(updatedTodos);
-    
-    // Focus the input field again
-    inputRef.current?.focus();
-  };
-
-  const handleToggleTodo = (todoId: string) => {
-    const updatedTodos = todos.map(todo => 
-      todo.id === todoId 
-        ? { ...todo, completed: !todo.completed } 
-        : todo
-    );
-    setTodos(updatedTodos);
-    
-    // Save changes immediately when toggling a todo
-    onUpdateTodos(updatedTodos);
-  };
-
-  const handleDeleteTodo = (todoId: string) => {
-    const updatedTodos = todos.filter(todo => todo.id !== todoId);
-    setTodos(updatedTodos);
-    
-    // Save changes immediately when deleting a todo
-    onUpdateTodos(updatedTodos);
-  };
+  }, [title, status, onClose, onUpdateStatus, onUpdateTitle]);
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setTitle(e.target.value);
@@ -142,10 +77,29 @@ export function TodoDialog({
     onUpdateTitle(title);
   };
 
+  const handleTitleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      handleClose();
+    }
+  };
+
+  const handleStatusChange = (nextStatus: NodeStatus) => {
+    if (isRootNode) return;
+    setStatus(nextStatus);
+    onUpdateStatus(nextStatus);
+  };
+
   const stopPropagation = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
   };
+
+  const statusOptions = [
+    { value: 'success' as NodeStatus, label: 'Success', Icon: CheckCircle2 },
+    { value: 'pending' as NodeStatus, label: 'Pending', Icon: Clock3 },
+    { value: 'failed' as NodeStatus, label: 'Failed', Icon: XCircle }
+  ];
 
   return (
     <div 
@@ -160,112 +114,71 @@ export function TodoDialog({
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gray-900 p-4 flex items-center justify-between">
+        <div className="bg-gray-900 p-4 flex items-center gap-3">
           <input
             type="text"
             value={title}
             onChange={handleTitleChange}
             onBlur={handleTitleBlur}
+            onKeyDown={handleTitleKeyDown}
             className="bg-transparent text-white text-xl font-semibold focus:outline-none focus:border-blue-500 border-b border-transparent w-full"
             placeholder="Node Title"
           />
-          <Button variant="ghost" size="icon" onClick={handleClose}>
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
-        
-        {/* Only show todo management UI for non-root nodes */}
-        {!isRootNode && (
-          <>
-            {/* Todo list */}
-            <div className="flex-1 overflow-y-auto p-4">
-              {todos.length === 0 ? (
-                <div className="text-gray-400 text-center py-4">
-                  No todos yet. Add one below!
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {todos.map(todo => (
-                    <li 
-                      key={todo.id}
-                      className="flex items-center bg-gray-700 rounded-lg p-3 group"
-                    >
-                      <Button 
-                        variant={todo.completed ? "default" : "outline"}
-                        size="icon"
-                        className="h-6 w-6 mr-3 flex-shrink-0"
-                        onClick={() => handleToggleTodo(todo.id)}
-                      >
-                        {todo.completed && <Check className="h-4 w-4" />}
-                      </Button>
-                      
-                      <span className={`flex-1 ${todo.completed ? 'line-through text-gray-400' : 'text-white'}`}>
-                        {todo.text}
-                      </span>
-                      
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleDeleteTodo(todo.id)}
-                      >
-                        <Trash className="h-4 w-4" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            
-            {/* Add todo form */}
-            <form onSubmit={handleAddTodo} onClick={handleFormClick} className="p-4 border-t border-gray-700">
-              <div className="flex">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={newTodoText}
-                  onChange={(e) => setNewTodoText(e.target.value)}
-                  className="flex-1 bg-gray-700 text-white rounded-l-lg px-4 py-2 focus:outline-none"
-                  placeholder="Add a new todo..."
-                />
-                <Button 
-                  type="submit" 
-                  className="rounded-l-none"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleAddTodo(e as unknown as React.FormEvent);
-                  }}
-                >
-                  Add
-                </Button>
-              </div>
-            </form>
-          </>
-    
-        )}
-        
-        {/* Action buttons */}
-        <div className="p-4 border-t border-gray-700 flex space-x-3">
-          <Button 
-            variant="default" 
-            className="flex-1"
-            onClick={saveChanges}
-          >
-            <Save className="h-4 w-4 mr-2" />
-            Save Changes
-          </Button>
-          
-          {!isRootNode && (
-            <Button 
-              variant="destructive" 
-              className="flex-1"
-              onClick={onDeleteNode}
-            >
-              <Trash className="h-4 w-4 mr-2" />
-              Delete Node
+          <div className="flex items-center gap-2">
+            {!isRootNode && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-red-300 hover:text-red-100 hover:bg-red-500/20"
+                onClick={() => {
+                  onDeleteNode();
+                }}
+              >
+                <Trash className="h-5 w-5" />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" onClick={handleClose}>
+              <X className="h-5 w-5" />
             </Button>
-          )}
+          </div>
         </div>
+        
+        {/* Status controls */}
+        {!isRootNode ? (
+          <div className="p-4 border-b border-gray-700 space-y-3">
+            <div>
+              <h2 className="text-sm font-medium text-gray-200">Node Status</h2>
+              <p className="text-xs text-gray-400 mt-1">
+                Choose whether this idea succeeds, stays pending, or fails.
+              </p>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {statusOptions.map(({ value, label, Icon }) => {
+                const isActive = status === value;
+                return (
+                  <Button
+                    key={value}
+                    type="button"
+                    variant="ghost"
+                    className={`h-14 w-full rounded-xl border flex items-center justify-center gap-2 text-sm font-semibold transition-all
+                      ${isActive
+                        ? 'border-blue-400 bg-blue-500/20 text-blue-100 shadow-inner shadow-blue-500/30'
+                        : 'border-gray-700 bg-gray-800/50 text-gray-300 hover:border-gray-500 hover:text-white'}
+                    `}
+                    onClick={() => handleStatusChange(value)}
+                  >
+                    <Icon className="h-5 w-5 shrink-0" />
+                    <span>{label}</span>
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 border-b border-gray-700 text-xs text-gray-400">
+            Root nodes manage their children and only keep their title.
+          </div>
+        )}
       </div>
     </div>
   );

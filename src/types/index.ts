@@ -3,17 +3,14 @@ export interface Position {
   y: number;
 }
 
-export interface Todo {
-  id: string;
-  text: string;
-  completed: boolean;
-}
+export type NodeStatus = 'pending' | 'success' | 'failed';
 
 export interface TodoNode {
   id: string;
   title: string;
   position: Position;
-  todos: Todo[];
+  status: NodeStatus;
+  isRoot?: boolean;
 }
 
 export interface Connection {

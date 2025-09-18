@@ -1,7 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { TodoNode, TodoItem } from '../types';
+import { TodoNode, NodeStatus } from '../types';
 import { Button } from './ui/button';
-import { Plus, Link } from 'lucide-react';
+import { Plus, Link, CheckCircle2, XCircle, Clock3 } from 'lucide-react';
+
+const STATUS_STYLES: Record<NodeStatus, { backgroundClass: string; glow: string; label: string; labelClass: string }> = {
+  success: {
+    backgroundClass: 'bg-gradient-to-br from-emerald-600 to-green-700',
+    glow: '0 0 0 4px rgba(16, 185, 129, 0.4)',
+    label: 'Success',
+    labelClass: 'text-emerald-100'
+  },
+  failed: {
+    backgroundClass: 'bg-gradient-to-br from-rose-600 to-red-700',
+    glow: '0 0 0 4px rgba(239, 68, 68, 0.4)',
+    label: 'Failed',
+    labelClass: 'text-rose-100'
+  },
+  pending: {
+    backgroundClass: 'bg-gradient-to-br from-slate-700 to-slate-800',
+    glow: '0 0 0 4px rgba(59, 130, 246, 0.35)',
+    label: 'Pending',
+    labelClass: 'text-blue-100'
+  }
+};
+
+interface StatusSummary {
+  success: number;
+  failed: number;
+  pending: number;
+  total: number;
+}
 
 interface NodeComponentProps {
   node: TodoNode;
@@ -9,7 +37,8 @@ interface NodeComponentProps {
   isConnecting: boolean;
   isDragging: boolean;
   connectedNodesCount: number;
-  connectedNodesTodos?: { completed: number; total: number };
+  statusSummary?: StatusSummary;
+  size: number;
   onClick: (e: React.MouseEvent) => void;
   onStartDrag: (node: TodoNode, event: React.MouseEvent) => void;
   onAddNode: () => void;
@@ -22,14 +51,18 @@ export function NodeComponent({
   isConnecting,
   isDragging,
   connectedNodesCount,
-  connectedNodesTodos = { completed: 0, total: 0 },
+  statusSummary,
+  size,
   onClick,
   onStartDrag,
   onAddNode,
   onConnect
 }: NodeComponentProps) {
   // Check if this is a root node (has no incoming connections)
-  const isRootNode = node.id === 'root' || node.title === 'My Tasks' || node.title === 'Work' || node.title === 'Personal';
+  const isRootNode =
+    typeof node.isRoot === 'boolean'
+      ? node.isRoot
+      : node.id === 'root' || node.title === 'My Tasks' || node.title === 'Work' || node.title === 'Personal';
   
   // State for confetti
   const [showConfetti, setShowConfetti] = useState(false);
@@ -48,96 +81,92 @@ export function NodeComponent({
     life: number;
   }>>([]);
   
-  // Calculate node size based on todos count or connected nodes
-  const todoCount = node.todos?.length || 0;
-  const baseSize = isRootNode 
-    ? Math.max(180, 180 + (connectedNodesCount * 20)) // Root node is always bigger
-    : Math.max(120, 120 + (todoCount * 10)); // Normal nodes grow with todos
-  
-  // Calculate the fill percentage based on completed todos
-  const completedTodos = node.todos?.filter((todo: TodoItem) => todo.completed).length || 0;
-  
-  // For root nodes, calculate fill based on all connected nodes' todos
-  const fillPercentage = isRootNode 
-    ? (connectedNodesTodos.total > 0 
-        ? (connectedNodesTodos.completed / connectedNodesTodos.total) * 100 
-        : 0)
-    : (todoCount > 0 ? (completedTodos / todoCount) * 100 : 0);
-  
-  // Show confetti when root node is completed
+  const summary = statusSummary ?? { success: 0, failed: 0, pending: 0, total: 0 };
+  const baseSize = size;
+  const nodeStatus: NodeStatus = node.status ?? 'pending';
+  const statusStyle = STATUS_STYLES[nodeStatus];
+  const StatusIcon = nodeStatus === 'success' ? CheckCircle2 : nodeStatus === 'failed' ? XCircle : Clock3;
+
+  const summaryWithoutSelf = isRootNode
+    ? {
+        success: Math.max(summary.success - (nodeStatus === 'success' ? 1 : 0), 0),
+        failed: Math.max(summary.failed - (nodeStatus === 'failed' ? 1 : 0), 0),
+        pending: Math.max(summary.pending - (nodeStatus === 'pending' ? 1 : 0), 0),
+        total: Math.max(summary.total - 1, 0),
+      }
+    : summary;
+
+  const shouldCelebrate = !isRootNode && nodeStatus === 'success';
+
   useEffect(() => {
-    const shouldShowConfetti = isRootNode 
-      ? (fillPercentage >= 100 && connectedNodesTodos.total > 0)
-      : (fillPercentage >= 100 && todoCount > 0);
-      
-    if (shouldShowConfetti) {
-      // Create confetti particles with physics
-      const particleCount = isRootNode ? 60 : 40; // More particles for root nodes
-      const particles = Array.from({ length: particleCount }, (_, i) => {
-        // Create radial explosion pattern
-        const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
-        const velocity = Math.random() * 6 + 3; // Slightly slower for more control
-        
-        const colors = [
-          '#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', 
-          '#FECA57', '#FF9FF3', '#54A0FF', '#5F27CD', '#00D2D3',
-          '#FF9F43', '#10AC84', '#EE5A24', '#0984E3', '#A29BFE'
-        ];
-        
-        return {
-          id: i,
-          type: ['circle', 'square', 'triangle', 'star'][Math.floor(Math.random() * 4)] as any,
-          color: colors[Math.floor(Math.random() * colors.length)],
-          x: 50, // Start from node center (percentage)
-          y: 50, // Start from node center (percentage)
-          vx: Math.cos(angle) * velocity,
-          vy: Math.sin(angle) * velocity,
-          rotation: Math.random() * 360,
-          rotationSpeed: (Math.random() - 0.5) * 10,
-          size: Math.random() * 8 + 4,
-          gravity: Math.random() * 0.3 + 0.1,
-          life: 1.0,
-        };
-      });
-      
-      setConfettiParticles(particles);
-      setShowConfetti(true);
-      
-      // Animate particles
-      const animateParticles = () => {
-        setConfettiParticles(prev => 
-          prev.map(particle => ({
-            ...particle,
-            x: particle.x + particle.vx,
-            y: particle.y + particle.vy,
-            vx: particle.vx * 0.98, // Air resistance
-            vy: particle.vy + particle.gravity, // Gravity
-            rotation: particle.rotation + particle.rotationSpeed,
-            life: particle.life - 0.02
-          })).filter(particle => {
-            // Keep particles only if they're alive and within circular bounds
-            const centerX = 50;
-            const centerY = 50;
-            const maxDistance = 150; // Maximum distance from center
-            const distance = Math.sqrt((particle.x - centerX) ** 2 + (particle.y - centerY) ** 2);
-            return particle.life > 0 && distance < maxDistance;
-          })
-        );
-      };
-      
-      const interval = setInterval(animateParticles, 16); // 60fps
-      const timer = setTimeout(() => {
-        setShowConfetti(false);
-        setConfettiParticles([]);
-        clearInterval(interval);
-      }, 4000);
-      
-      return () => {
-        clearTimeout(timer);
-        clearInterval(interval);
-      };
+    if (!shouldCelebrate) {
+      setShowConfetti(false);
+      setConfettiParticles([]);
+      return;
     }
-  }, [isRootNode, fillPercentage, connectedNodesTodos.total, todoCount]);
+
+    const particleCount = 40;
+    const particles = Array.from({ length: particleCount }, (_, i) => {
+      const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
+      const velocity = Math.random() * 6 + 3;
+
+      const colors = [
+        '#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
+        '#FECA57', '#FF9FF3', '#54A0FF', '#5F27CD', '#00D2D3',
+        '#FF9F43', '#10AC84', '#EE5A24', '#0984E3', '#A29BFE'
+      ];
+
+      return {
+        id: i,
+        type: ['circle', 'square', 'triangle', 'star'][Math.floor(Math.random() * 4)] as any,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        x: 50,
+        y: 50,
+        vx: Math.cos(angle) * velocity,
+        vy: Math.sin(angle) * velocity,
+        rotation: Math.random() * 360,
+        rotationSpeed: (Math.random() - 0.5) * 10,
+        size: Math.random() * 8 + 4,
+        gravity: Math.random() * 0.3 + 0.1,
+        life: 1.0,
+      };
+    });
+
+    setConfettiParticles(particles);
+    setShowConfetti(true);
+
+    const animateParticles = () => {
+      setConfettiParticles(prev =>
+        prev.map(particle => ({
+          ...particle,
+          x: particle.x + particle.vx,
+          y: particle.y + particle.vy,
+          vx: particle.vx * 0.98,
+          vy: particle.vy + particle.gravity,
+          rotation: particle.rotation + particle.rotationSpeed,
+          life: particle.life - 0.02
+        })).filter(particle => {
+          const centerX = 50;
+          const centerY = 50;
+          const maxDistance = 150;
+          const distance = Math.sqrt((particle.x - centerX) ** 2 + (particle.y - centerY) ** 2);
+          return particle.life > 0 && distance < maxDistance;
+        })
+      );
+    };
+
+    const interval = setInterval(animateParticles, 16);
+    const timer = setTimeout(() => {
+      setShowConfetti(false);
+      setConfettiParticles([]);
+      clearInterval(interval);
+    }, 4000);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [shouldCelebrate]);
 
   // Render individual confetti particle
   const renderParticle = (particle: typeof confettiParticles[0]) => {
@@ -273,81 +302,78 @@ export function NodeComponent({
         </div>
       )}
 
-      {/* Node circle with water fill effect */}
-      <div 
-        className="absolute inset-0 rounded-full overflow-hidden flex flex-col items-center justify-center" 
-        style={{ 
-          backgroundColor: isRootNode ? '#2D6A9F' : '#334155',
-          boxShadow: isSelected 
-            ? '0 0 0 4px rgba(59, 130, 246, 0.5), 0 10px 15px -3px rgba(0, 0, 0, 0.3)' 
-            : '0 4px 6px -1px rgba(0, 0, 0, 0.2)'
+      <div
+        className={`absolute inset-0 rounded-full overflow-hidden flex flex-col items-center justify-center ${
+          isRootNode ? 'bg-gradient-to-br from-blue-700 via-slate-800 to-slate-900' : statusStyle.backgroundClass
+        }`}
+        style={{
+          boxShadow: isSelected
+            ? '0 0 0 4px rgba(59, 130, 246, 0.5), 0 10px 15px -3px rgba(0, 0, 0, 0.3)'
+            : isRootNode
+            ? '0 12px 24px rgba(15, 23, 42, 0.4)'
+            : statusStyle.glow
         }}
         onMouseDown={(e) => onStartDrag(node, e)}
       >
-        {/* Water fill effect for all nodes */}
-        {fillPercentage > 0 && (
-          <div
-            className={`absolute bottom-0 left-0 right-0 transition-all duration-500 ${
-              isRootNode 
-                ? 'bg-gradient-to-t from-blue-600 to-blue-500' 
-                : 'bg-gradient-to-t from-blue-500 to-blue-400'
-            }`}
-            style={{ 
-              height: `${fillPercentage}%`,
-              boxShadow: fillPercentage >= 100 ? '0 0 20px rgba(59, 130, 246, 0.8)' : 'none'
-            }}
-          >
-            {fillPercentage >= 100 && (
-              <div className="absolute inset-0 animate-pulse opacity-30 bg-white"></div>
-            )}
-          </div>
-        )}
-        
-        {/* Root node special design */}
         {isRootNode && (
-          <div className="absolute inset-0 opacity-30">
-            <div className="absolute inset-0 bg-gradient-radial from-blue-300 to-transparent opacity-50"></div>
+          <div className="absolute inset-0 opacity-20">
+            <div className="absolute inset-0 bg-gradient-radial from-blue-300 to-transparent" />
           </div>
         )}
 
-        {/* Content overlay */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-3 z-10">
-          <div className={`text-white font-medium text-center mb-1 truncate ${isRootNode ? 'text-xl w-[80%]' : 'w-[90%]'}`}>
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-3 z-10 gap-2">
+          <div
+            className={`text-white font-semibold text-center leading-tight whitespace-pre-wrap break-words ${
+              isRootNode ? 'text-xl max-w-[80%]' : 'text-lg max-w-[85%]'
+            }`}
+          >
             {node.title || 'Untitled'}
           </div>
-          
-          {/* Show todos count for non-root nodes */}
-          {!isRootNode && (
-            <div className="text-xs text-gray-300 mb-2">
-              {todoCount > 0 
-                ? `${completedTodos}/${todoCount} todos` 
-                : 'No todos'}
+
+          {!isRootNode ? (
+            <div className={`flex items-center gap-2 text-sm font-medium ${statusStyle.labelClass}`}>
+              <StatusIcon className="h-5 w-5" />
+              <span>{statusStyle.label}</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center text-xs text-slate-200 gap-1">
+              <span>
+                {connectedNodesCount > 0
+                  ? `${connectedNodesCount} bağlı node`
+                  : 'Bağlı node yok'}
+              </span>
+              {connectedNodesCount > 0 && (
+                <div className="flex items-center gap-3 text-[0.7rem] font-semibold">
+                  <span className="flex items-center gap-1 text-emerald-200">
+                    <CheckCircle2 className="h-3 w-3" />
+                    {summaryWithoutSelf.success}
+                  </span>
+                  <span className="flex items-center gap-1 text-rose-200">
+                    <XCircle className="h-3 w-3" />
+                    {summaryWithoutSelf.failed}
+                  </span>
+                  <span className="flex items-center gap-1 text-blue-200">
+                    <Clock3 className="h-3 w-3" />
+                    {summaryWithoutSelf.pending}
+                  </span>
+                </div>
+              )}
             </div>
           )}
-          
-          {/* Show connected nodes and todos count for root node */}
-          {isRootNode && (
-            <div className="text-xs text-gray-300 mb-2">
-              {connectedNodesCount > 0 
-                ? `${connectedNodesCount} node${connectedNodesCount !== 1 ? 's' : ''} · ${connectedNodesTodos.completed}/${connectedNodesTodos.total} todos` 
-                : 'No connected nodes'}
-            </div>
-          )}
-          
+
           <div className="flex space-x-2 mt-1">
-            <Button 
+            <Button
               size="icon"
-              className="h-8 w-8 rounded-full bg-gray-700 hover:bg-gray-600"
+              className="h-8 w-8 rounded-full bg-slate-900/40 hover:bg-slate-900/60 border border-white/10"
               onClick={onAddNode}
             >
               <Plus className="h-4 w-4" />
             </Button>
-            
-            {/* Only show connect button for non-root nodes */}
+
             {!isRootNode && (
-              <Button 
+              <Button
                 size="icon"
-                className="h-8 w-8 rounded-full bg-gray-700 hover:bg-gray-600"
+                className="h-8 w-8 rounded-full bg-slate-900/40 hover:bg-slate-900/60 border border-white/10"
                 onClick={onConnect}
               >
                 <Link className="h-4 w-4" />
