@@ -57,7 +57,8 @@ interface NodeComponentProps {
   isEditing: boolean;
   connectedNodesCount: number;
   statusSummary?: StatusSummary;
-  size: number;
+  nodeWidth: number;
+  nodeHeight: number;
   onClick: (e: React.MouseEvent) => void;
   onStartDrag: (node: TodoNode, event: React.MouseEvent) => void;
   onTouchStartDrag?: (node: TodoNode, event: React.TouchEvent) => void;
@@ -77,7 +78,8 @@ export function NodeComponent({
   isEditing,
   connectedNodesCount,
   statusSummary,
-  size,
+  nodeWidth,
+  nodeHeight,
   onClick,
   onStartDrag,
   onTouchStartDrag,
@@ -133,22 +135,94 @@ export function NodeComponent({
   const nodeStatus: NodeStatus = node.status ?? 'pending';
   const statusStyle = STATUS_STYLES[nodeStatus];
 
-  // Calculate dynamic size based on localTitle when editing
-  const calculateDynamicSize = (title: string): number => {
-    const baseNodeSize = isRootNode ? 220 : 140;
+  // Calculate dynamic size based on title for optimal text display
+  // Returns { width, height } to properly handle multi-line titles
+  const calculateDynamicSize = (title: string): { width: number; height: number } => {
     const normalizedTitle = title.trim();
+
+    // Base dimensions
+    // Button container needs: 3×44px buttons + 2×4px gaps + 2×6px padding = 152px
+    // Plus node's px-4 content padding (2×16px = 32px) = 184px minimum
+    const baseWidth = isRootNode ? 200 : 160;
+    const minWidth = isRootNode ? 200 : 184;
+    const maxWidth = isRootNode ? 400 : 320;
+
+    // Fixed UI element heights
+    const topPadding = 48;
+    const bottomPadding = 12;
+    const buttonAreaHeight = isRootNode ? 80 : 64;
+    const titlePaddingY = 16;
+
+    if (!normalizedTitle) {
+      const width = Math.max(minWidth, baseWidth);
+      const height = topPadding + 24 + titlePaddingY + buttonAreaHeight + bottomPadding;
+      return { width, height: Math.max(width, height) };
+    }
+
+    // Font metrics
+    const fontSize = isRootNode ? 20 : 18;
+    const lineHeight = fontSize * 1.5;
+    const avgCharWidth = fontSize * 0.52;
+
+    const words = normalizedTitle.split(/\s+/);
+    const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
     const totalLength = normalizedTitle.length;
-    const longestWord = normalizedTitle.split(/\s+/).reduce((max, word) => Math.max(max, word.length), 0);
+    const wordCount = words.length;
 
-    const lengthBoost = Math.max(totalLength - 10, 0) * 3;
-    const wordBoost = Math.max(longestWord - 8, 0) * 6;
-    const combinedBoost = Math.min(250, lengthBoost + wordBoost);
+    // Calculate width needed for longest word
+    const longestWordWidth = longestWord * avgCharWidth;
+    const minWidthForWord = Math.ceil(longestWordWidth / 0.75) + 48;
 
-    return Math.min(450, baseNodeSize + combinedBoost);
+    // Calculate target width based on text
+    let targetWidth = baseWidth;
+
+    if (wordCount <= 2 && totalLength <= 16) {
+      const singleLineWidth = totalLength * avgCharWidth;
+      targetWidth = Math.max(baseWidth, Math.ceil(singleLineWidth / 0.75) + 48);
+    } else {
+      const idealCharsPerLine = 12;
+      const estimatedLines = Math.ceil(totalLength / idealCharsPerLine);
+      const charsPerLine = Math.ceil(totalLength / Math.min(estimatedLines, 3));
+      const lineWidthCalc = charsPerLine * avgCharWidth;
+      targetWidth = Math.max(baseWidth, Math.ceil(lineWidthCalc / 0.75) + 48);
+    }
+
+    targetWidth = Math.max(targetWidth, minWidthForWord);
+    const finalWidth = Math.max(minWidth, Math.min(maxWidth, targetWidth));
+
+    // WORD-BASED line counting for accurate height
+    const textAreaWidth = finalWidth * 0.75;
+    let lineCount = 1;
+    let currentLineWidth = 0;
+    const spaceWidth = avgCharWidth;
+
+    for (const word of words) {
+      const wordWidth = word.length * avgCharWidth;
+      if (currentLineWidth === 0) {
+        currentLineWidth = wordWidth;
+      } else if (currentLineWidth + spaceWidth + wordWidth <= textAreaWidth) {
+        currentLineWidth += spaceWidth + wordWidth;
+      } else {
+        lineCount++;
+        currentLineWidth = wordWidth;
+      }
+    }
+
+    // Calculate title height with word-based line count
+    const titleHeight = lineCount * lineHeight;
+
+    // Calculate total height needed
+    const totalHeight = topPadding + titleHeight + titlePaddingY + buttonAreaHeight + bottomPadding;
+    const minHeight = isRootNode ? 160 : 150;
+    const finalHeight = Math.max(minHeight, Math.ceil(totalHeight) + 8);
+
+    return { width: finalWidth, height: finalHeight };
   };
 
-  // Use dynamic size when editing, otherwise use prop size
-  const baseSize = isEditing ? calculateDynamicSize(localTitle) : size;
+  // Use dynamic size when editing, otherwise use prop dimensions
+  const dynamicSize = isEditing ? calculateDynamicSize(localTitle) : null;
+  const baseWidth = dynamicSize ? dynamicSize.width : nodeWidth;
+  const baseHeight = dynamicSize ? dynamicSize.height : nodeHeight;
 
   const summaryWithoutSelf = isRootNode
     ? {
@@ -322,8 +396,8 @@ export function NodeComponent({
     const nodeRect = nodeRef.current?.getBoundingClientRect();
     if (!nodeRect) return false;
 
-    const nodeWidth = baseSize;
-    const nodeHeight = baseSize;
+    const currentNodeWidth = baseWidth;
+    const currentNodeHeight = baseHeight;
 
     // Mouse position relative to node's top-left corner
     const mouseX = e.clientX - nodeRect.left;
@@ -331,9 +405,9 @@ export function NodeComponent({
 
     // Distance from each edge (negative = outside node)
     const distFromLeft = mouseX;
-    const distFromRight = nodeWidth - mouseX;
+    const distFromRight = currentNodeWidth - mouseX;
     const distFromTop = mouseY;
-    const distFromBottom = nodeHeight - mouseY;
+    const distFromBottom = currentNodeHeight - mouseY;
 
     // Edge detection zone: 45px inside, 40px outside
     const innerZone = 45;
@@ -346,8 +420,8 @@ export function NodeComponent({
     const inBottomZone = distFromBottom >= -outerZone && distFromBottom <= innerZone;
 
     // Must be within bounds on perpendicular axis
-    const inVerticalBounds = mouseY >= -outerZone && mouseY <= nodeHeight + outerZone;
-    const inHorizontalBounds = mouseX >= -outerZone && mouseX <= nodeWidth + outerZone;
+    const inVerticalBounds = mouseY >= -outerZone && mouseY <= currentNodeHeight + outerZone;
+    const inHorizontalBounds = mouseX >= -outerZone && mouseX <= currentNodeWidth + outerZone;
 
     const nearEdge =
       (inLeftZone && inVerticalBounds) ||
@@ -357,13 +431,13 @@ export function NodeComponent({
 
     if (nearEdge) {
       // Calculate angle from node center to mouse position
-      const centerX = nodeWidth / 2;
-      const centerY = nodeHeight / 2;
+      const centerX = currentNodeWidth / 2;
+      const centerY = currentNodeHeight / 2;
       currentAngleRef.current = Math.atan2(mouseY - centerY, mouseX - centerX);
     }
 
     return nearEdge;
-  }, [isDragging, isEditing, isDraggingNewNode, baseSize]);
+  }, [isDragging, isEditing, isDraggingNewNode, baseWidth, baseHeight]);
 
   // Handle mouse enter on hover zone
   const handleHoverZoneEnter = useCallback(() => {
@@ -684,8 +758,8 @@ export function NodeComponent({
       style={{
         left: `${node.position.x}px`,
         top: `${node.position.y}px`,
-        width: `${baseSize}px`,
-        height: `${baseSize}px`,
+        width: `${baseWidth}px`,
+        height: `${baseHeight}px`,
         transform: isEditing ? 'scale(1.03)' : 'scale(1)',
         transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
@@ -700,7 +774,7 @@ export function NodeComponent({
         <div
           className="absolute z-[100] flex items-center justify-center"
           style={{
-            right: '-28px',
+            right: '-24px',
             top: '50%',
             transform: 'translateY(-50%)',
           }}
@@ -708,18 +782,36 @@ export function NodeComponent({
           <button
             onClick={handleMobilePlusClick}
             onTouchStart={handleMobileDragStart}
-            className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600
-              shadow-lg shadow-blue-500/30 flex items-center justify-center
-              active:scale-95 transition-transform touch-manipulation"
-            style={{ touchAction: 'none' }}
+            className="group relative w-12 h-12 rounded-full flex items-center justify-center
+              active:scale-90 transition-all duration-300 touch-manipulation overflow-hidden"
+            style={{
+              touchAction: 'none',
+              background: 'linear-gradient(145deg, rgba(99, 102, 241, 0.8) 0%, rgba(79, 70, 229, 0.9) 50%, rgba(67, 56, 202, 0.8) 100%)',
+              boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.25), inset 0 -2px 4px rgba(0,0,0,0.2), 0 0 24px rgba(99, 102, 241, 0.5), 0 8px 20px rgba(67, 56, 202, 0.4)',
+            }}
           >
+            {/* Shine effect */}
+            <div
+              className="absolute inset-0 rounded-full"
+              style={{
+                background: 'linear-gradient(180deg, rgba(255,255,255,0.3) 0%, transparent 40%)',
+              }}
+            />
+            {/* Glow ring */}
+            <div
+              className="absolute inset-0 rounded-full animate-pulse"
+              style={{
+                boxShadow: '0 0 0 3px rgba(129, 140, 248, 0.4)',
+              }}
+            />
             <svg
-              width="28"
-              height="28"
+              className="relative z-10 drop-shadow-[0_2px_4px_rgba(0,0,0,0.3)]"
+              width="24"
+              height="24"
               viewBox="0 0 24 24"
               fill="none"
               stroke="white"
-              strokeWidth="2.5"
+              strokeWidth="3"
               strokeLinecap="round"
             >
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -873,10 +965,10 @@ export function NodeComponent({
         <div
           className="absolute pointer-events-none z-50 overflow-visible"
           style={{
-            left: `-${baseSize / 2}px`,
-            top: `-${baseSize / 2}px`,
-            width: `${baseSize * 2}px`,
-            height: `${baseSize * 2}px`,
+            left: `-${baseWidth / 2}px`,
+            top: `-${baseHeight / 2}px`,
+            width: `${baseWidth * 2}px`,
+            height: `${baseHeight * 2}px`,
             borderRadius: '50%',
           }}
         >
@@ -885,8 +977,8 @@ export function NodeComponent({
             <div
               className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full animate-ping"
               style={{
-                width: `${baseSize}px`,
-                height: `${baseSize}px`,
+                width: `${baseWidth}px`,
+                height: `${baseHeight}px`,
                 background: 'radial-gradient(circle, rgba(16,185,129,0.4) 0%, rgba(59,130,246,0.2) 50%, transparent 100%)'
               }}
             />
@@ -924,104 +1016,267 @@ export function NodeComponent({
           </>
         )}
 
-        {/* Delete button for non-root nodes */}
+        {/* Delete button for non-root nodes - refined floating style */}
         {!isRootNode && (
           <button
             onClick={handleDeleteClick}
-            className="absolute top-1 right-1 z-30 p-2.5 min-w-[44px] min-h-[44px] rounded-xl bg-black/20 hover:bg-rose-500/30 active:bg-rose-500/40
-              border border-white/10 hover:border-rose-400/50 transition-all duration-200 group touch-manipulation flex items-center justify-center"
+            className="group absolute top-2 right-2 z-30 w-8 h-8 rounded-full transition-all duration-300 touch-manipulation flex items-center justify-center overflow-hidden hover:scale-110 active:scale-95"
+            style={{
+              background: 'linear-gradient(145deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.03) 100%)',
+              boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15), inset 0 -1px 2px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.2)',
+            }}
           >
-            <XCircle className="h-5 w-5 text-white/40 group-hover:text-rose-400 group-active:text-rose-400" />
+            {/* Hover glow layer */}
+            <div className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+              style={{
+                background: 'linear-gradient(145deg, rgba(244, 63, 94, 0.3) 0%, rgba(225, 29, 72, 0.4) 100%)',
+                boxShadow: '0 0 12px rgba(244, 63, 94, 0.4)',
+              }}
+            />
+            <svg
+              className="relative z-10 w-4 h-4 text-white/40 group-hover:text-rose-200 transition-colors duration-300"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
           </button>
         )}
 
-        {/* Inner content */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 z-10 gap-3">
-          {/* Title - editable when isEditing, clickable otherwise */}
-          {isEditing ? (
-            <input
-              ref={inputRef}
-              type="text"
-              value={localTitle}
-              onChange={(e) => setLocalTitle(e.target.value)}
-              onKeyDown={handleTitleKeyDown}
-              onBlur={handleTitleBlur}
-              className="bg-transparent border-none px-3 py-2 text-lg text-white
-                text-center font-semibold focus:outline-none focus:ring-0
-                w-[80%] caret-blue-400"
-              placeholder=""
-              onClick={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <div
-              onClick={handleTitleClick}
-              className={`font-semibold text-center leading-tight whitespace-pre-wrap break-words cursor-text
-                hover:opacity-80 transition-opacity ${
-                isRootNode
-                  ? 'text-xl bg-gradient-to-r from-blue-200 via-purple-200 to-blue-200 bg-clip-text text-transparent max-w-[85%]'
-                  : 'text-lg text-white/90 max-w-[85%]'
-              }`}
-            >
-              {node.title || 'Untitled'}
-            </div>
-          )}
+        {/* Inner content - structured layout with title centered and buttons at bottom */}
+        <div className="absolute inset-0 flex flex-col items-center pt-10 px-4 pb-4 z-10">
+          {/* Title area - flex-1 to take remaining space, centers content vertically */}
+          <div className="flex-1 flex items-center justify-center w-full">
+            {/* Title - editable when isEditing, clickable otherwise */}
+            {isEditing ? (
+              <input
+                ref={inputRef}
+                type="text"
+                value={localTitle}
+                onChange={(e) => setLocalTitle(e.target.value)}
+                onKeyDown={handleTitleKeyDown}
+                onBlur={handleTitleBlur}
+                className="bg-transparent border-none px-3 py-2 text-lg text-white
+                  text-center font-semibold focus:outline-none focus:ring-0
+                  w-[80%] caret-blue-400"
+                placeholder=""
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <div
+                onClick={handleTitleClick}
+                className={`font-semibold text-center leading-snug cursor-text
+                  hover:opacity-80 transition-opacity ${
+                  isRootNode
+                    ? 'text-xl bg-gradient-to-r from-blue-200 via-purple-200 to-blue-200 bg-clip-text text-transparent max-w-[85%]'
+                    : 'text-lg text-white/90 max-w-[80%]'
+                }`}
+                style={{
+                  wordBreak: 'normal',
+                  overflowWrap: 'break-word',
+                  hyphens: 'auto',
+                  textWrap: 'balance',
+                  WebkitHyphens: 'auto',
+                } as React.CSSProperties}
+                lang="tr"
+              >
+                {node.title || 'Untitled'}
+              </div>
+            )}
+          </div>
 
-          {/* Status buttons for non-root nodes OR root info */}
+          {/* Status buttons for non-root nodes OR root info - fixed at bottom */}
           {!isRootNode ? (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 mt-2 flex-shrink-0 p-1.5 rounded-2xl bg-black/20 backdrop-blur-sm border border-white/5">
+              {/* Success button - glass orb style */}
               <button
                 onClick={(e) => handleStatusClick(e, 'success')}
-                className={`p-2.5 min-w-[44px] min-h-[44px] rounded-xl transition-all duration-200 border touch-manipulation flex items-center justify-center ${
+                className={`group relative w-11 h-11 rounded-full transition-all duration-300 touch-manipulation flex items-center justify-center overflow-hidden ${
                   nodeStatus === 'success'
-                    ? 'bg-emerald-500/30 border-emerald-400/50 scale-110'
-                    : 'bg-white/5 border-white/10 hover:bg-emerald-500/20 hover:border-emerald-400/30 active:bg-emerald-500/25'
+                    ? 'scale-105'
+                    : 'hover:scale-105 active:scale-95'
                 }`}
+                style={{
+                  background: nodeStatus === 'success'
+                    ? 'linear-gradient(145deg, rgba(16, 185, 129, 0.4) 0%, rgba(5, 150, 105, 0.6) 50%, rgba(4, 120, 87, 0.4) 100%)'
+                    : 'linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)',
+                  boxShadow: nodeStatus === 'success'
+                    ? 'inset 0 1px 1px rgba(255,255,255,0.3), inset 0 -1px 2px rgba(0,0,0,0.2), 0 0 20px rgba(16, 185, 129, 0.4), 0 4px 12px rgba(16, 185, 129, 0.3)'
+                    : 'inset 0 1px 1px rgba(255,255,255,0.1), inset 0 -1px 2px rgba(0,0,0,0.1)',
+                }}
               >
-                <CheckCircle2 className={`h-6 w-6 ${nodeStatus === 'success' ? 'text-emerald-400' : 'text-white/60'}`} />
+                {/* Inner highlight */}
+                <div className={`absolute inset-0.5 rounded-full transition-opacity duration-300 ${
+                  nodeStatus === 'success' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(16, 185, 129, 0.2) 0%, transparent 50%)',
+                  }}
+                />
+                {/* Glow ring */}
+                <div className={`absolute inset-0 rounded-full transition-opacity duration-300 ${
+                  nodeStatus === 'success' ? 'opacity-100' : 'opacity-0'
+                }`}
+                  style={{
+                    boxShadow: '0 0 0 2px rgba(52, 211, 153, 0.5)',
+                  }}
+                />
+                <CheckCircle2 className={`relative z-10 h-5 w-5 transition-all duration-300 ${
+                  nodeStatus === 'success'
+                    ? 'text-emerald-200 drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                    : 'text-white/50 group-hover:text-emerald-300'
+                }`} />
               </button>
+
+              {/* Pending button - glass orb style */}
               <button
                 onClick={(e) => handleStatusClick(e, 'pending')}
-                className={`p-2.5 min-w-[44px] min-h-[44px] rounded-xl transition-all duration-200 border touch-manipulation flex items-center justify-center ${
+                className={`group relative w-11 h-11 rounded-full transition-all duration-300 touch-manipulation flex items-center justify-center overflow-hidden ${
                   nodeStatus === 'pending'
-                    ? 'bg-blue-500/30 border-blue-400/50 scale-110'
-                    : 'bg-white/5 border-white/10 hover:bg-blue-500/20 hover:border-blue-400/30 active:bg-blue-500/25'
+                    ? 'scale-105'
+                    : 'hover:scale-105 active:scale-95'
                 }`}
+                style={{
+                  background: nodeStatus === 'pending'
+                    ? 'linear-gradient(145deg, rgba(59, 130, 246, 0.4) 0%, rgba(37, 99, 235, 0.6) 50%, rgba(29, 78, 216, 0.4) 100%)'
+                    : 'linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)',
+                  boxShadow: nodeStatus === 'pending'
+                    ? 'inset 0 1px 1px rgba(255,255,255,0.3), inset 0 -1px 2px rgba(0,0,0,0.2), 0 0 20px rgba(59, 130, 246, 0.4), 0 4px 12px rgba(59, 130, 246, 0.3)'
+                    : 'inset 0 1px 1px rgba(255,255,255,0.1), inset 0 -1px 2px rgba(0,0,0,0.1)',
+                }}
               >
-                <Clock3 className={`h-6 w-6 ${nodeStatus === 'pending' ? 'text-blue-400' : 'text-white/60'}`} />
+                {/* Inner highlight */}
+                <div className={`absolute inset-0.5 rounded-full transition-opacity duration-300 ${
+                  nodeStatus === 'pending' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(59, 130, 246, 0.2) 0%, transparent 50%)',
+                  }}
+                />
+                {/* Glow ring */}
+                <div className={`absolute inset-0 rounded-full transition-opacity duration-300 ${
+                  nodeStatus === 'pending' ? 'opacity-100' : 'opacity-0'
+                }`}
+                  style={{
+                    boxShadow: '0 0 0 2px rgba(96, 165, 250, 0.5)',
+                  }}
+                />
+                <Clock3 className={`relative z-10 h-5 w-5 transition-all duration-300 ${
+                  nodeStatus === 'pending'
+                    ? 'text-blue-200 drop-shadow-[0_0_8px_rgba(96,165,250,0.8)]'
+                    : 'text-white/50 group-hover:text-blue-300'
+                }`} />
               </button>
+
+              {/* Failed button - glass orb style */}
               <button
                 onClick={(e) => handleStatusClick(e, 'failed')}
-                className={`p-2.5 min-w-[44px] min-h-[44px] rounded-xl transition-all duration-200 border touch-manipulation flex items-center justify-center ${
+                className={`group relative w-11 h-11 rounded-full transition-all duration-300 touch-manipulation flex items-center justify-center overflow-hidden ${
                   nodeStatus === 'failed'
-                    ? 'bg-rose-500/30 border-rose-400/50 scale-110'
-                    : 'bg-white/5 border-white/10 hover:bg-rose-500/20 hover:border-rose-400/30 active:bg-rose-500/25'
+                    ? 'scale-105'
+                    : 'hover:scale-105 active:scale-95'
                 }`}
+                style={{
+                  background: nodeStatus === 'failed'
+                    ? 'linear-gradient(145deg, rgba(244, 63, 94, 0.4) 0%, rgba(225, 29, 72, 0.6) 50%, rgba(190, 18, 60, 0.4) 100%)'
+                    : 'linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)',
+                  boxShadow: nodeStatus === 'failed'
+                    ? 'inset 0 1px 1px rgba(255,255,255,0.3), inset 0 -1px 2px rgba(0,0,0,0.2), 0 0 20px rgba(244, 63, 94, 0.4), 0 4px 12px rgba(244, 63, 94, 0.3)'
+                    : 'inset 0 1px 1px rgba(255,255,255,0.1), inset 0 -1px 2px rgba(0,0,0,0.1)',
+                }}
               >
-                <XCircle className={`h-6 w-6 ${nodeStatus === 'failed' ? 'text-rose-400' : 'text-white/60'}`} />
+                {/* Inner highlight */}
+                <div className={`absolute inset-0.5 rounded-full transition-opacity duration-300 ${
+                  nodeStatus === 'failed' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(244, 63, 94, 0.2) 0%, transparent 50%)',
+                  }}
+                />
+                {/* Glow ring */}
+                <div className={`absolute inset-0 rounded-full transition-opacity duration-300 ${
+                  nodeStatus === 'failed' ? 'opacity-100' : 'opacity-0'
+                }`}
+                  style={{
+                    boxShadow: '0 0 0 2px rgba(251, 113, 133, 0.5)',
+                  }}
+                />
+                <XCircle className={`relative z-10 h-5 w-5 transition-all duration-300 ${
+                  nodeStatus === 'failed'
+                    ? 'text-rose-200 drop-shadow-[0_0_8px_rgba(251,113,133,0.8)]'
+                    : 'text-white/50 group-hover:text-rose-300'
+                }`} />
               </button>
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-2">
-              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 backdrop-blur-sm border border-white/10">
-                <Sparkles className="h-3 w-3 text-blue-400" />
-                <span className="text-xs text-slate-300">
+            <div className="flex flex-col items-center gap-2 mt-2 flex-shrink-0">
+              {/* Task counter badge with glass effect */}
+              <div
+                className="flex items-center gap-2 px-4 py-1.5 rounded-full"
+                style={{
+                  background: 'linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)',
+                  boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.15), inset 0 -1px 2px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.15)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-indigo-300 drop-shadow-[0_0_4px_rgba(129,140,248,0.6)]" />
+                <span className="text-xs font-medium text-slate-200">
                   {connectedNodesCount > 0 ? `${connectedNodesCount} görev` : 'Görev ekleyin'}
                 </span>
               </div>
+              {/* Status summary with mini glass orbs */}
               {connectedNodesCount > 0 && (
-                <div className="flex items-center gap-3 text-xs font-medium">
-                  <span className="flex items-center gap-1 text-emerald-400">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    {summaryWithoutSelf.success}
-                  </span>
-                  <span className="flex items-center gap-1 text-rose-400">
-                    <XCircle className="h-3.5 w-3.5" />
-                    {summaryWithoutSelf.failed}
-                  </span>
-                  <span className="flex items-center gap-1 text-slate-400">
-                    <Clock3 className="h-3.5 w-3.5" />
-                    {summaryWithoutSelf.pending}
-                  </span>
+                <div className="flex items-center gap-1 p-1 rounded-xl"
+                  style={{
+                    background: 'rgba(0,0,0,0.15)',
+                  }}
+                >
+                  {/* Success mini orb */}
+                  <div
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg"
+                    style={{
+                      background: summaryWithoutSelf.success > 0
+                        ? 'linear-gradient(145deg, rgba(16, 185, 129, 0.25) 0%, rgba(5, 150, 105, 0.3) 100%)'
+                        : 'transparent',
+                    }}
+                  >
+                    <CheckCircle2 className={`h-3.5 w-3.5 ${summaryWithoutSelf.success > 0 ? 'text-emerald-300 drop-shadow-[0_0_4px_rgba(52,211,153,0.6)]' : 'text-white/30'}`} />
+                    <span className={`text-xs font-semibold ${summaryWithoutSelf.success > 0 ? 'text-emerald-200' : 'text-white/30'}`}>
+                      {summaryWithoutSelf.success}
+                    </span>
+                  </div>
+                  {/* Failed mini orb */}
+                  <div
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg"
+                    style={{
+                      background: summaryWithoutSelf.failed > 0
+                        ? 'linear-gradient(145deg, rgba(244, 63, 94, 0.25) 0%, rgba(225, 29, 72, 0.3) 100%)'
+                        : 'transparent',
+                    }}
+                  >
+                    <XCircle className={`h-3.5 w-3.5 ${summaryWithoutSelf.failed > 0 ? 'text-rose-300 drop-shadow-[0_0_4px_rgba(251,113,133,0.6)]' : 'text-white/30'}`} />
+                    <span className={`text-xs font-semibold ${summaryWithoutSelf.failed > 0 ? 'text-rose-200' : 'text-white/30'}`}>
+                      {summaryWithoutSelf.failed}
+                    </span>
+                  </div>
+                  {/* Pending mini orb */}
+                  <div
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg"
+                    style={{
+                      background: summaryWithoutSelf.pending > 0
+                        ? 'linear-gradient(145deg, rgba(59, 130, 246, 0.25) 0%, rgba(37, 99, 235, 0.3) 100%)'
+                        : 'transparent',
+                    }}
+                  >
+                    <Clock3 className={`h-3.5 w-3.5 ${summaryWithoutSelf.pending > 0 ? 'text-blue-300 drop-shadow-[0_0_4px_rgba(96,165,250,0.6)]' : 'text-white/30'}`} />
+                    <span className={`text-xs font-semibold ${summaryWithoutSelf.pending > 0 ? 'text-blue-200' : 'text-white/30'}`}>
+                      {summaryWithoutSelf.pending}
+                    </span>
+                  </div>
                 </div>
               )}
             </div>

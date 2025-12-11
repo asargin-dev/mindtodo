@@ -214,13 +214,13 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
     const parentSize = getNodeSize(parentNode, parentConnectedCount);
 
     // Calculate offset - distance from parent center to new node center
-    const newNodeSize = 140; // Default size for new nodes
-    const offset = parentSize / 2 + newNodeSize / 2 + 60; // Gap between nodes
+    const newNodeSize = 145; // Default size for new nodes
+    const offset = parentSize.width / 2 + newNodeSize / 2 + 60; // Gap between nodes
 
     // Calculate new position based on angle
     const newPosition: Position = {
-      x: parentNode.position.x + (parentSize - newNodeSize) / 2 + Math.cos(angle) * offset,
-      y: parentNode.position.y + (parentSize - newNodeSize) / 2 + Math.sin(angle) * offset
+      x: parentNode.position.x + (parentSize.width - newNodeSize) / 2 + Math.cos(angle) * offset,
+      y: parentNode.position.y + (parentSize.height - newNodeSize) / 2 + Math.sin(angle) * offset
     };
 
     const newNode: TodoNode = {
@@ -390,21 +390,102 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
     }
   };
 
-  const getNodeSize = (node: TodoNode, connectedCount: number) => {
-    const baseSize = isRootNode(node)
-      ? Math.max(220, 200 + connectedCount * 22)
-      : 140;
-
+  // Calculate node size based on title for optimal text display
+  // Returns { width, height } to properly accommodate multi-line titles
+  const getNodeSize = (node: TodoNode, connectedCount: number): { width: number; height: number } => {
+    const isRoot = isRootNode(node);
     const title = node.title ?? '';
     const normalizedTitle = title.trim();
+
+    // Base dimensions
+    // Button container needs: 3×44px buttons + 2×4px gaps + 2×6px padding = 152px
+    // Plus node's px-4 content padding (2×16px = 32px) = 184px minimum
+    const baseWidth = isRoot ? Math.max(200, 180 + connectedCount * 20) : 160;
+    const minWidth = isRoot ? 200 : 184;
+    const maxWidth = isRoot ? 400 : 320;
+
+    // Fixed UI element heights
+    const topPadding = 48; // pt-12 for delete button area
+    const bottomPadding = 12; // pb-3
+    const buttonAreaHeight = isRoot ? 80 : 64; // Button container + mt-2 + extra buffer
+    const titlePaddingY = 16; // Vertical padding around title
+
+    if (!normalizedTitle) {
+      const width = Math.max(minWidth, baseWidth);
+      const height = topPadding + 24 + titlePaddingY + buttonAreaHeight + bottomPadding;
+      return { width, height: Math.max(width, height) };
+    }
+
+    // Font metrics
+    const fontSize = isRoot ? 20 : 18;
+    const lineHeight = fontSize * 1.5; // More generous line height
+    const avgCharWidth = fontSize * 0.52; // Slightly narrower estimate for accuracy
+
+    const words = normalizedTitle.split(/\s+/);
+    const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
     const totalLength = normalizedTitle.length;
-    const longestWord = normalizedTitle.split(/\s+/).reduce((max, word) => Math.max(max, word.length), 0);
+    const wordCount = words.length;
 
-    const lengthBoost = Math.max(totalLength - 18, 0) * 2.5;
-    const wordBoost = Math.max(longestWord - 12, 0) * 6;
-    const combinedBoost = Math.min(220, lengthBoost + wordBoost);
+    // Calculate width needed for longest word
+    const longestWordWidth = longestWord * avgCharWidth;
+    const minWidthForWord = Math.ceil(longestWordWidth / 0.75) + 48;
 
-    return Math.min(420, baseSize + combinedBoost);
+    // Calculate target width based on text
+    let targetWidth = baseWidth;
+
+    if (wordCount <= 2 && totalLength <= 16) {
+      // Short text: fit on one line
+      const singleLineWidth = totalLength * avgCharWidth;
+      targetWidth = Math.max(baseWidth, Math.ceil(singleLineWidth / 0.75) + 48);
+    } else {
+      // Longer text: optimize for 2-3 lines with wider nodes
+      const idealCharsPerLine = 12;
+      const estimatedLines = Math.ceil(totalLength / idealCharsPerLine);
+      const charsPerLine = Math.ceil(totalLength / Math.min(estimatedLines, 3));
+      const lineWidthCalc = charsPerLine * avgCharWidth;
+      targetWidth = Math.max(baseWidth, Math.ceil(lineWidthCalc / 0.75) + 48);
+    }
+
+    // Ensure we can fit the longest word
+    targetWidth = Math.max(targetWidth, minWidthForWord);
+
+    // Clamp width
+    const finalWidth = Math.max(minWidth, Math.min(maxWidth, targetWidth));
+
+    // WORD-BASED line counting for accurate height
+    // Simulate text wrapping by word boundaries
+    const textAreaWidth = finalWidth * 0.75; // Account for padding
+    let lineCount = 1;
+    let currentLineWidth = 0;
+    const spaceWidth = avgCharWidth;
+
+    for (const word of words) {
+      const wordWidth = word.length * avgCharWidth;
+
+      if (currentLineWidth === 0) {
+        // First word on line
+        currentLineWidth = wordWidth;
+      } else if (currentLineWidth + spaceWidth + wordWidth <= textAreaWidth) {
+        // Word fits on current line
+        currentLineWidth += spaceWidth + wordWidth;
+      } else {
+        // Word needs new line
+        lineCount++;
+        currentLineWidth = wordWidth;
+      }
+    }
+
+    // Calculate title height with word-based line count
+    const titleHeight = lineCount * lineHeight;
+
+    // Calculate total height needed with generous buffer
+    const totalHeight = topPadding + titleHeight + titlePaddingY + buttonAreaHeight + bottomPadding;
+
+    // Ensure minimum height
+    const minHeight = isRoot ? 160 : 150;
+    const finalHeight = Math.max(minHeight, Math.ceil(totalHeight) + 8); // +8 safety buffer
+
+    return { width: finalWidth, height: finalHeight };
   };
 
   const handleStartDrag = (node: TodoNode, event: React.MouseEvent) => {
@@ -797,17 +878,30 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
           const sourceSize = getNodeSize(sourceNode, sourceConnectedCount);
           const targetSize = getNodeSize(targetNode, targetConnectedCount);
 
-          const startX = sourceNode.position.x + (sourceSize / 2);
-          const startY = sourceNode.position.y + (sourceSize / 2);
-          const endX = targetNode.position.x + (targetSize / 2);
-          const endY = targetNode.position.y + (targetSize / 2);
+          // Calculate centers based on width/height
+          const startX = sourceNode.position.x + (sourceSize.width / 2);
+          const startY = sourceNode.position.y + (sourceSize.height / 2);
+          const endX = targetNode.position.x + (targetSize.width / 2);
+          const endY = targetNode.position.y + (targetSize.height / 2);
 
           const dx = endX - startX;
           const dy = endY - startY;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
-          const sourceRadius = (sourceSize / 2) - 2;
-          const targetRadius = (targetSize / 2) - 2;
+          // Use elliptical edge calculation for non-square nodes
+          const sourceAngle = Math.atan2(dy, dx);
+          const targetAngle = Math.atan2(-dy, -dx);
+
+          // Calculate edge point on ellipse
+          const getEllipseEdge = (w: number, h: number, angle: number) => {
+            const a = w / 2 - 2;
+            const b = h / 2 - 2;
+            const r = (a * b) / Math.sqrt(Math.pow(b * Math.cos(angle), 2) + Math.pow(a * Math.sin(angle), 2));
+            return r;
+          };
+
+          const sourceRadius = getEllipseEdge(sourceSize.width, sourceSize.height, sourceAngle);
+          const targetRadius = getEllipseEdge(targetSize.width, targetSize.height, targetAngle);
 
           const startPointX = startX + (dx / distance) * sourceRadius;
           const startPointY = startY + (dy / distance) * sourceRadius;
@@ -853,7 +947,8 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
           isEditing={editingNodeId === node.id}
           connectedNodesCount={connectedNodesCount}
           statusSummary={statusSummary}
-          size={nodeSize}
+          nodeWidth={nodeSize.width}
+          nodeHeight={nodeSize.height}
           onClick={(e) => handleNodeClick(e, node)}
           onStartDrag={(node: TodoNode, event: React.MouseEvent) => handleStartDrag(node, event)}
           onTouchStartDrag={(node: TodoNode, event: React.TouchEvent) => handleNodeTouchStart(node, event)}
