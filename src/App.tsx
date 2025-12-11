@@ -44,7 +44,13 @@ function getMapProgress(mapId: string): number {
 function App() {
   const [maps, setMaps] = useState<MapMeta[]>([])
   const [selectedMapId, setSelectedMapId] = useState<string>('')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  // Start collapsed on mobile (< 768px)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 768
+    }
+    return false
+  })
   const [progressVersion, setProgressVersion] = useState(0) // Triggers sidebar progress refresh
   const [isInitialized, setIsInitialized] = useState(false) // Prevents save-before-load race condition
   const selectedMap = maps.find((map) => map.id === selectedMapId)
@@ -53,6 +59,18 @@ function App() {
   const handleNodesChange = useCallback(() => {
     setProgressVersion(v => v + 1)
   }, [])
+
+  // Auto-collapse sidebar on window resize (mobile detection)
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 768 && !sidebarCollapsed) {
+        setSidebarCollapsed(true)
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [sidebarCollapsed])
 
   // Load maps meta on mount - MUST complete before save effect runs
   useEffect(() => {

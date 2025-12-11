@@ -60,6 +60,7 @@ interface NodeComponentProps {
   size: number;
   onClick: (e: React.MouseEvent) => void;
   onStartDrag: (node: TodoNode, event: React.MouseEvent) => void;
+  onTouchStartDrag?: (node: TodoNode, event: React.TouchEvent) => void;
   onStatusChange: (status: NodeStatus) => void;
   onAddNodeAtAngle: (angle: number) => void;
   onAddNodeAtPosition: (screenX: number, screenY: number) => void;
@@ -79,6 +80,7 @@ export function NodeComponent({
   size,
   onClick,
   onStartDrag,
+  onTouchStartDrag,
   onStatusChange,
   onAddNodeAtAngle,
   onAddNodeAtPosition,
@@ -111,6 +113,8 @@ export function NodeComponent({
   // Hover states
   const [isHovering, setIsHovering] = useState(false);
   const [isNearEdge, setIsNearEdge] = useState(false);
+  // Mobile tap state - shows + button on tap
+  const [isMobileTapped, setIsMobileTapped] = useState(false);
   // Drag-to-place state
   const [isDraggingNewNode, setIsDraggingNewNode] = useState(false);
   const [dragStartPosition, setDragStartPosition] = useState<{ x: number; y: number } | null>(null);
@@ -118,6 +122,8 @@ export function NodeComponent({
   // Refs for values needed in effect without causing re-runs
   const currentAngleRef = useRef(0);
   const dragStartPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const touchStartTimeRef = useRef<number>(0);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const [localTitle, setLocalTitle] = useState(node.title);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -436,6 +442,150 @@ export function NodeComponent({
     onDeleteNode();
   };
 
+  // Touch event handlers for mobile support
+  const handleNodeTouchStart = useCallback((e: React.TouchEvent) => {
+    if (isEditing) return;
+
+    // Record touch start for tap detection
+    touchStartTimeRef.current = Date.now();
+    touchStartPosRef.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+    };
+
+    // Start node drag via parent handler
+    if (onTouchStartDrag) {
+      onTouchStartDrag(node, e);
+    }
+  }, [isEditing, node, onTouchStartDrag]);
+
+  const handleNodeTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (isEditing) return;
+
+    const duration = Date.now() - touchStartTimeRef.current;
+    const startPos = touchStartPosRef.current;
+
+    // Get end position from changedTouches (touches array is empty on touchend)
+    const endX = e.changedTouches[0]?.clientX ?? 0;
+    const endY = e.changedTouches[0]?.clientY ?? 0;
+
+    if (startPos) {
+      const distance = Math.sqrt(
+        Math.pow(endX - startPos.x, 2) + Math.pow(endY - startPos.y, 2)
+      );
+
+      // Tap detection: short duration + minimal movement
+      if (duration < 300 && distance < 15) {
+        // Toggle mobile tapped state to show + button
+        setIsMobileTapped(prev => !prev);
+      }
+    }
+
+    touchStartPosRef.current = null;
+  }, [isEditing]);
+
+  // Handle mobile + button click for adding new node
+  const handleMobilePlusClick = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Add node at default angle (to the right)
+    onAddNodeAtAngle(0);
+    setIsMobileTapped(false);
+  }, [onAddNodeAtAngle]);
+
+  // Touch handlers for drag-to-place (from mobile + button long press)
+  const handleMobileDragStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const touch = e.touches[0];
+    const clickPos = { x: touch.clientX, y: touch.clientY };
+    dragStartPositionRef.current = clickPos;
+    setDragStartPosition(clickPos);
+    setDragPreviewPosition(clickPos);
+    setIsDraggingNewNode(true);
+    currentAngleRef.current = 0; // Default angle
+  }, []);
+
+  // Global touch listeners for drag-to-place
+  useEffect(() => {
+    if (!isDraggingNewNode) return;
+
+    const handleGlobalTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        e.preventDefault();
+        setDragPreviewPosition({
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+        });
+      }
+    };
+
+    const handleGlobalTouchEnd = (e: TouchEvent) => {
+      const touch = e.changedTouches[0];
+      if (!touch) return;
+
+      const startPos = dragStartPositionRef.current;
+      const releaseX = touch.clientX;
+      const releaseY = touch.clientY;
+
+      if (startPos) {
+        const distance = Math.sqrt(
+          Math.pow(releaseX - startPos.x, 2) + Math.pow(releaseY - startPos.y, 2)
+        );
+
+        const MIN_DRAG_DISTANCE = 50;
+
+        if (distance < MIN_DRAG_DISTANCE) {
+          // Quick tap - use angle-based placement
+          onAddNodeAtAngle(currentAngleRef.current);
+        } else {
+          // Drag - use position-based placement
+          onAddNodeAtPosition(releaseX, releaseY);
+        }
+      }
+
+      // Reset states
+      setIsDraggingNewNode(false);
+      setDragStartPosition(null);
+      setDragPreviewPosition(null);
+      dragStartPositionRef.current = null;
+      setIsMobileTapped(false);
+    };
+
+    document.addEventListener('touchmove', handleGlobalTouchMove, { passive: false });
+    document.addEventListener('touchend', handleGlobalTouchEnd);
+    document.addEventListener('touchcancel', handleGlobalTouchEnd);
+
+    return () => {
+      document.removeEventListener('touchmove', handleGlobalTouchMove);
+      document.removeEventListener('touchend', handleGlobalTouchEnd);
+      document.removeEventListener('touchcancel', handleGlobalTouchEnd);
+    };
+  }, [isDraggingNewNode, onAddNodeAtAngle, onAddNodeAtPosition]);
+
+  // Clear mobile tapped state when tapping elsewhere
+  useEffect(() => {
+    if (!isMobileTapped) return;
+
+    const handleGlobalTap = (e: TouchEvent) => {
+      // Check if tap is outside this node
+      const target = e.target as HTMLElement;
+      if (!nodeRef.current?.contains(target)) {
+        setIsMobileTapped(false);
+      }
+    };
+
+    // Small delay to prevent immediate clearing
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('touchstart', handleGlobalTap);
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('touchstart', handleGlobalTap);
+    };
+  }, [isMobileTapped]);
+
   // Render confetti particle
   const renderParticle = (particle: typeof confettiParticles[0]) => {
     const opacity = Math.max(0, particle.life);
@@ -540,9 +690,45 @@ export function NodeComponent({
         transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onClick={onClick}
+      onTouchStart={handleNodeTouchStart}
+      onTouchEnd={handleNodeTouchEnd}
       data-component-name="NodeComponent"
       data-node-id={node.id}
     >
+      {/* Mobile + button - appears on tap for adding new nodes */}
+      {isMobileTapped && !isEditing && (
+        <div
+          className="absolute z-[100] flex items-center justify-center"
+          style={{
+            right: '-28px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+          }}
+        >
+          <button
+            onClick={handleMobilePlusClick}
+            onTouchStart={handleMobileDragStart}
+            className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600
+              shadow-lg shadow-blue-500/30 flex items-center justify-center
+              active:scale-95 transition-transform touch-manipulation"
+            style={{ touchAction: 'none' }}
+          >
+            <svg
+              width="28"
+              height="28"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="white"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* Extended hover zone for edge detection - cursor changes when near edge */}
       <div
         className="absolute z-10"
@@ -742,10 +928,10 @@ export function NodeComponent({
         {!isRootNode && (
           <button
             onClick={handleDeleteClick}
-            className="absolute top-2 right-2 z-30 p-1.5 rounded-lg bg-black/20 hover:bg-rose-500/30
-              border border-white/10 hover:border-rose-400/50 transition-all duration-200 group"
+            className="absolute top-1 right-1 z-30 p-2.5 min-w-[44px] min-h-[44px] rounded-xl bg-black/20 hover:bg-rose-500/30 active:bg-rose-500/40
+              border border-white/10 hover:border-rose-400/50 transition-all duration-200 group touch-manipulation flex items-center justify-center"
           >
-            <XCircle className="h-4 w-4 text-white/40 group-hover:text-rose-400" />
+            <XCircle className="h-5 w-5 text-white/40 group-hover:text-rose-400 group-active:text-rose-400" />
           </button>
         )}
 
@@ -782,36 +968,36 @@ export function NodeComponent({
 
           {/* Status buttons for non-root nodes OR root info */}
           {!isRootNode ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <button
                 onClick={(e) => handleStatusClick(e, 'success')}
-                className={`p-2 rounded-xl transition-all duration-200 border ${
+                className={`p-2.5 min-w-[44px] min-h-[44px] rounded-xl transition-all duration-200 border touch-manipulation flex items-center justify-center ${
                   nodeStatus === 'success'
                     ? 'bg-emerald-500/30 border-emerald-400/50 scale-110'
-                    : 'bg-white/5 border-white/10 hover:bg-emerald-500/20 hover:border-emerald-400/30'
+                    : 'bg-white/5 border-white/10 hover:bg-emerald-500/20 hover:border-emerald-400/30 active:bg-emerald-500/25'
                 }`}
               >
-                <CheckCircle2 className={`h-5 w-5 ${nodeStatus === 'success' ? 'text-emerald-400' : 'text-white/60'}`} />
+                <CheckCircle2 className={`h-6 w-6 ${nodeStatus === 'success' ? 'text-emerald-400' : 'text-white/60'}`} />
               </button>
               <button
                 onClick={(e) => handleStatusClick(e, 'pending')}
-                className={`p-2 rounded-xl transition-all duration-200 border ${
+                className={`p-2.5 min-w-[44px] min-h-[44px] rounded-xl transition-all duration-200 border touch-manipulation flex items-center justify-center ${
                   nodeStatus === 'pending'
                     ? 'bg-blue-500/30 border-blue-400/50 scale-110'
-                    : 'bg-white/5 border-white/10 hover:bg-blue-500/20 hover:border-blue-400/30'
+                    : 'bg-white/5 border-white/10 hover:bg-blue-500/20 hover:border-blue-400/30 active:bg-blue-500/25'
                 }`}
               >
-                <Clock3 className={`h-5 w-5 ${nodeStatus === 'pending' ? 'text-blue-400' : 'text-white/60'}`} />
+                <Clock3 className={`h-6 w-6 ${nodeStatus === 'pending' ? 'text-blue-400' : 'text-white/60'}`} />
               </button>
               <button
                 onClick={(e) => handleStatusClick(e, 'failed')}
-                className={`p-2 rounded-xl transition-all duration-200 border ${
+                className={`p-2.5 min-w-[44px] min-h-[44px] rounded-xl transition-all duration-200 border touch-manipulation flex items-center justify-center ${
                   nodeStatus === 'failed'
                     ? 'bg-rose-500/30 border-rose-400/50 scale-110'
-                    : 'bg-white/5 border-white/10 hover:bg-rose-500/20 hover:border-rose-400/30'
+                    : 'bg-white/5 border-white/10 hover:bg-rose-500/20 hover:border-rose-400/30 active:bg-rose-500/25'
                 }`}
               >
-                <XCircle className={`h-5 w-5 ${nodeStatus === 'failed' ? 'text-rose-400' : 'text-white/60'}`} />
+                <XCircle className={`h-6 w-6 ${nodeStatus === 'failed' ? 'text-rose-400' : 'text-white/60'}`} />
               </button>
             </div>
           ) : (

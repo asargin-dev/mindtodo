@@ -85,11 +85,11 @@ export function Sidebar({
                 <p className="text-xs text-slate-400">Düşüncelerini organize et</p>
               </div>
             </div>
-            <Button 
-              variant="ghost" 
-              size="icon" 
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={onToggleCollapse}
-              className="hover:bg-slate-700/50 rounded-xl transition-all duration-200"
+              className="hover:bg-slate-700/50 active:bg-slate-600/50 rounded-xl transition-all duration-200 h-11 w-11 min-w-[44px] min-h-[44px] touch-manipulation"
             >
               <X className="h-5 w-5" />
             </Button>
@@ -150,13 +150,13 @@ export function Sidebar({
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 hover:bg-red-500/20 hover:text-red-400 rounded-lg"
+                        className="opacity-40 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity h-10 w-10 min-w-[44px] min-h-[44px] hover:bg-red-500/20 hover:text-red-400 active:bg-red-500/30 active:text-red-400 rounded-lg touch-manipulation"
                         onClick={(e) => {
                           e.stopPropagation()
                           onDelete(map.id)
                         }}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-5 w-5" />
                       </Button>
                     </div>
                     
@@ -267,20 +267,18 @@ export function Sidebar({
             <div className="flex gap-2">
               <Button
                 variant="ghost"
-                size="sm"
                 onClick={onExport}
-                className="flex-1 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 hover:text-white rounded-lg transition-all duration-200"
+                className="flex-1 bg-slate-800/50 hover:bg-slate-700/50 active:bg-slate-600/50 text-slate-300 hover:text-white rounded-lg transition-all duration-200 h-11 min-h-[44px] touch-manipulation"
               >
-                <Download className="h-4 w-4 mr-2" />
+                <Download className="h-5 w-5 mr-2" />
                 Export
               </Button>
               <Button
                 variant="ghost"
-                size="sm"
                 onClick={() => setImporting(!importing)}
-                className="flex-1 bg-slate-800/50 hover:bg-slate-700/50 text-slate-300 hover:text-white rounded-lg transition-all duration-200"
+                className="flex-1 bg-slate-800/50 hover:bg-slate-700/50 active:bg-slate-600/50 text-slate-300 hover:text-white rounded-lg transition-all duration-200 h-11 min-h-[44px] touch-manipulation"
               >
-                <Upload className="h-4 w-4 mr-2" />
+                <Upload className="h-5 w-5 mr-2" />
                 Import
               </Button>
             </div>
