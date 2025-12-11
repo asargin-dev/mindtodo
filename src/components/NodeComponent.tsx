@@ -61,7 +61,6 @@ interface NodeComponentProps {
   nodeHeight: number;
   onClick: (e: React.MouseEvent) => void;
   onStartDrag: (node: TodoNode, event: React.MouseEvent) => void;
-  onTouchStartDrag?: (node: TodoNode, event: React.TouchEvent) => void;
   onStatusChange: (status: NodeStatus) => void;
   onAddNodeAtAngle: (angle: number) => void;
   onAddNodeAtPosition: (screenX: number, screenY: number) => void;
@@ -82,7 +81,6 @@ export function NodeComponent({
   nodeHeight,
   onClick,
   onStartDrag,
-  onTouchStartDrag,
   onStatusChange,
   onAddNodeAtAngle,
   onAddNodeAtPosition,
@@ -115,8 +113,6 @@ export function NodeComponent({
   // Hover states
   const [isHovering, setIsHovering] = useState(false);
   const [isNearEdge, setIsNearEdge] = useState(false);
-  // Mobile tap state - shows + button on tap
-  const [isMobileTapped, setIsMobileTapped] = useState(false);
   // Drag-to-place state
   const [isDraggingNewNode, setIsDraggingNewNode] = useState(false);
   const [dragStartPosition, setDragStartPosition] = useState<{ x: number; y: number } | null>(null);
@@ -124,8 +120,6 @@ export function NodeComponent({
   // Refs for values needed in effect without causing re-runs
   const currentAngleRef = useRef(0);
   const dragStartPositionRef = useRef<{ x: number; y: number } | null>(null);
-  const touchStartTimeRef = useRef<number>(0);
-  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const [localTitle, setLocalTitle] = useState(node.title);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -516,149 +510,7 @@ export function NodeComponent({
     onDeleteNode();
   };
 
-  // Touch event handlers for mobile support
-  const handleNodeTouchStart = useCallback((e: React.TouchEvent) => {
-    if (isEditing) return;
 
-    // Record touch start for tap detection
-    touchStartTimeRef.current = Date.now();
-    touchStartPosRef.current = {
-      x: e.touches[0].clientX,
-      y: e.touches[0].clientY,
-    };
-
-    // Start node drag via parent handler
-    if (onTouchStartDrag) {
-      onTouchStartDrag(node, e);
-    }
-  }, [isEditing, node, onTouchStartDrag]);
-
-  const handleNodeTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (isEditing) return;
-
-    const duration = Date.now() - touchStartTimeRef.current;
-    const startPos = touchStartPosRef.current;
-
-    // Get end position from changedTouches (touches array is empty on touchend)
-    const endX = e.changedTouches[0]?.clientX ?? 0;
-    const endY = e.changedTouches[0]?.clientY ?? 0;
-
-    if (startPos) {
-      const distance = Math.sqrt(
-        Math.pow(endX - startPos.x, 2) + Math.pow(endY - startPos.y, 2)
-      );
-
-      // Tap detection: short duration + minimal movement
-      if (duration < 300 && distance < 15) {
-        // Toggle mobile tapped state to show + button
-        setIsMobileTapped(prev => !prev);
-      }
-    }
-
-    touchStartPosRef.current = null;
-  }, [isEditing]);
-
-  // Handle mobile + button click for adding new node
-  const handleMobilePlusClick = useCallback((e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Add node at default angle (to the right)
-    onAddNodeAtAngle(0);
-    setIsMobileTapped(false);
-  }, [onAddNodeAtAngle]);
-
-  // Touch handlers for drag-to-place (from mobile + button long press)
-  const handleMobileDragStart = useCallback((e: React.TouchEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const touch = e.touches[0];
-    const clickPos = { x: touch.clientX, y: touch.clientY };
-    dragStartPositionRef.current = clickPos;
-    setDragStartPosition(clickPos);
-    setDragPreviewPosition(clickPos);
-    setIsDraggingNewNode(true);
-    currentAngleRef.current = 0; // Default angle
-  }, []);
-
-  // Global touch listeners for drag-to-place
-  useEffect(() => {
-    if (!isDraggingNewNode) return;
-
-    const handleGlobalTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        e.preventDefault();
-        setDragPreviewPosition({
-          x: e.touches[0].clientX,
-          y: e.touches[0].clientY,
-        });
-      }
-    };
-
-    const handleGlobalTouchEnd = (e: TouchEvent) => {
-      const touch = e.changedTouches[0];
-      if (!touch) return;
-
-      const startPos = dragStartPositionRef.current;
-      const releaseX = touch.clientX;
-      const releaseY = touch.clientY;
-
-      if (startPos) {
-        const distance = Math.sqrt(
-          Math.pow(releaseX - startPos.x, 2) + Math.pow(releaseY - startPos.y, 2)
-        );
-
-        const MIN_DRAG_DISTANCE = 50;
-
-        if (distance < MIN_DRAG_DISTANCE) {
-          // Quick tap - use angle-based placement
-          onAddNodeAtAngle(currentAngleRef.current);
-        } else {
-          // Drag - use position-based placement
-          onAddNodeAtPosition(releaseX, releaseY);
-        }
-      }
-
-      // Reset states
-      setIsDraggingNewNode(false);
-      setDragStartPosition(null);
-      setDragPreviewPosition(null);
-      dragStartPositionRef.current = null;
-      setIsMobileTapped(false);
-    };
-
-    document.addEventListener('touchmove', handleGlobalTouchMove, { passive: false });
-    document.addEventListener('touchend', handleGlobalTouchEnd);
-    document.addEventListener('touchcancel', handleGlobalTouchEnd);
-
-    return () => {
-      document.removeEventListener('touchmove', handleGlobalTouchMove);
-      document.removeEventListener('touchend', handleGlobalTouchEnd);
-      document.removeEventListener('touchcancel', handleGlobalTouchEnd);
-    };
-  }, [isDraggingNewNode, onAddNodeAtAngle, onAddNodeAtPosition]);
-
-  // Clear mobile tapped state when tapping elsewhere
-  useEffect(() => {
-    if (!isMobileTapped) return;
-
-    const handleGlobalTap = (e: TouchEvent) => {
-      // Check if tap is outside this node
-      const target = e.target as HTMLElement;
-      if (!nodeRef.current?.contains(target)) {
-        setIsMobileTapped(false);
-      }
-    };
-
-    // Small delay to prevent immediate clearing
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('touchstart', handleGlobalTap);
-    }, 100);
-
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('touchstart', handleGlobalTap);
-    };
-  }, [isMobileTapped]);
 
   // Render confetti particle
   const renderParticle = (particle: typeof confettiParticles[0]) => {
@@ -764,63 +616,9 @@ export function NodeComponent({
         transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onClick={onClick}
-      onTouchStart={handleNodeTouchStart}
-      onTouchEnd={handleNodeTouchEnd}
       data-component-name="NodeComponent"
       data-node-id={node.id}
     >
-      {/* Mobile + button - appears on tap for adding new nodes */}
-      {isMobileTapped && !isEditing && (
-        <div
-          className="absolute z-[100] flex items-center justify-center"
-          style={{
-            right: '-24px',
-            top: '50%',
-            transform: 'translateY(-50%)',
-          }}
-        >
-          <button
-            onClick={handleMobilePlusClick}
-            onTouchStart={handleMobileDragStart}
-            className="group relative w-12 h-12 rounded-full flex items-center justify-center
-              active:scale-90 transition-all duration-300 touch-manipulation overflow-hidden"
-            style={{
-              touchAction: 'none',
-              background: 'linear-gradient(145deg, rgba(99, 102, 241, 0.8) 0%, rgba(79, 70, 229, 0.9) 50%, rgba(67, 56, 202, 0.8) 100%)',
-              boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.25), inset 0 -2px 4px rgba(0,0,0,0.2), 0 0 24px rgba(99, 102, 241, 0.5), 0 8px 20px rgba(67, 56, 202, 0.4)',
-            }}
-          >
-            {/* Shine effect */}
-            <div
-              className="absolute inset-0 rounded-full"
-              style={{
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.3) 0%, transparent 40%)',
-              }}
-            />
-            {/* Glow ring */}
-            <div
-              className="absolute inset-0 rounded-full animate-pulse"
-              style={{
-                boxShadow: '0 0 0 3px rgba(129, 140, 248, 0.4)',
-              }}
-            />
-            <svg
-              className="relative z-10 drop-shadow-[0_2px_4px_rgba(0,0,0,0.3)]"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="3"
-              strokeLinecap="round"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
-        </div>
-      )}
-
       {/* Extended hover zone for edge detection - cursor changes when near edge */}
       <div
         className="absolute z-10"

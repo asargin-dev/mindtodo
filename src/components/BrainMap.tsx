@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Minus, Maximize } from 'lucide-react';
 import { Button } from './ui/button';
 import { TodoNode, Connection, NodeStatus } from '../types';
 import { NodeComponent } from './NodeComponent';
-import { getTouchDistance, getTouchCenter, getEventCoordinates, isTouchDevice } from '../hooks/useTouchHandlers';
 
 interface Position {
   x: number;
@@ -94,16 +93,6 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
   const [wasDragging, setWasDragging] = useState(false);
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Touch handling state
-  const [isTouchPanning, setIsTouchPanning] = useState(false);
-  const [isPinching, setIsPinching] = useState(false);
-  const lastTouchPointRef = useRef<Position | null>(null);
-  const initialPinchDistanceRef = useRef<number>(0);
-  const initialPinchZoomRef = useRef<number>(1);
-  const pinchCenterRef = useRef<Position | null>(null);
-  const touchDragNodeRef = useRef<TodoNode | null>(null);
-  const isTouchDraggingNodeRef = useRef(false);
-  const touchStartPosRef = useRef<Position | null>(null);
 
   const mapNameRef = useRef(mapName);
   useEffect(() => {
@@ -549,174 +538,6 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
     setZoom(newZoom);
   };
 
-  // Touch handlers for mobile support
-  const handleTouchStart = useCallback((event: React.TouchEvent) => {
-    const target = event.target as HTMLElement;
-    const nodeElement = target.closest('[data-component-name="NodeComponent"]');
-
-    // If touching a node, let NodeComponent handle it
-    if (nodeElement || target.closest('button') || target.closest('input')) {
-      return;
-    }
-
-    if (event.touches.length === 2) {
-      // Pinch-to-zoom start
-      event.preventDefault();
-      setIsPinching(true);
-      setIsTouchPanning(false);
-      initialPinchDistanceRef.current = getTouchDistance(event.touches[0], event.touches[1]);
-      initialPinchZoomRef.current = zoom;
-      pinchCenterRef.current = getTouchCenter(event.touches[0], event.touches[1]);
-    } else if (event.touches.length === 1) {
-      // Single finger pan start
-      setIsTouchPanning(true);
-      lastTouchPointRef.current = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY,
-      };
-    }
-  }, [zoom]);
-
-  const handleTouchMove = useCallback((event: React.TouchEvent) => {
-    if (event.touches.length === 2 && isPinching) {
-      // Pinch-to-zoom
-      event.preventDefault();
-      const currentDistance = getTouchDistance(event.touches[0], event.touches[1]);
-      const scale = currentDistance / initialPinchDistanceRef.current;
-      const newZoom = Math.max(0.1, Math.min(3, initialPinchZoomRef.current * scale));
-
-      const center = getTouchCenter(event.touches[0], event.touches[1]);
-      const rect = canvasRef.current?.getBoundingClientRect();
-
-      if (rect && pinchCenterRef.current) {
-        const scaleChange = newZoom / zoom;
-        const centerX = center.x - rect.left;
-        const centerY = center.y - rect.top;
-
-        const newPanX = (centerX - pan.x) * (1 - scaleChange) + pan.x;
-        const newPanY = (centerY - pan.y) * (1 - scaleChange) + pan.y;
-
-        setPan({ x: newPanX, y: newPanY });
-      }
-
-      setZoom(newZoom);
-      pinchCenterRef.current = center;
-    } else if (event.touches.length === 1 && isTouchPanning && lastTouchPointRef.current) {
-      // Single finger pan
-      const currentX = event.touches[0].clientX;
-      const currentY = event.touches[0].clientY;
-      const deltaX = currentX - lastTouchPointRef.current.x;
-      const deltaY = currentY - lastTouchPointRef.current.y;
-
-      setPan(prevPan => ({
-        x: prevPan.x + deltaX,
-        y: prevPan.y + deltaY,
-      }));
-
-      lastTouchPointRef.current = { x: currentX, y: currentY };
-    }
-  }, [isPinching, isTouchPanning, zoom, pan]);
-
-  const handleTouchEnd = useCallback((event: React.TouchEvent) => {
-    if (event.touches.length === 0) {
-      // All fingers lifted
-      setIsPinching(false);
-      setIsTouchPanning(false);
-      lastTouchPointRef.current = null;
-      pinchCenterRef.current = null;
-    } else if (event.touches.length === 1 && isPinching) {
-      // Went from 2 fingers to 1 - transition to pan
-      setIsPinching(false);
-      setIsTouchPanning(true);
-      lastTouchPointRef.current = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY,
-      };
-    }
-  }, [isPinching]);
-
-  // Touch handlers for node dragging (called from NodeComponent)
-  const handleNodeTouchStart = useCallback((node: TodoNode, event: React.TouchEvent) => {
-    if (event.touches.length === 1) {
-      event.stopPropagation();
-      isTouchDraggingNodeRef.current = true;
-      touchDragNodeRef.current = node;
-      touchStartPosRef.current = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY,
-      };
-      setWasDragging(false);
-    }
-  }, []);
-
-  const handleNodeTouchMove = useCallback((event: TouchEvent) => {
-    if (isTouchDraggingNodeRef.current && touchDragNodeRef.current && touchStartPosRef.current && event.touches.length === 1) {
-      setWasDragging(true);
-
-      const touch = event.touches[0];
-      const dx = (touch.clientX - touchStartPosRef.current.x) / zoom;
-      const dy = (touch.clientY - touchStartPosRef.current.y) / zoom;
-
-      const node = touchDragNodeRef.current;
-      const nodeElement = document.querySelector(`[data-node-id="${node.id}"]`);
-      if (nodeElement) {
-        (nodeElement as HTMLElement).style.transform = `translate(${dx}px, ${dy}px)`;
-      }
-
-      setNodes(prev => prev.map(n =>
-        n.id === node.id
-          ? {
-              ...n,
-              position: {
-                x: node.position.x + dx,
-                y: node.position.y + dy,
-              }
-            }
-          : n
-      ));
-
-      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-      touchDragNodeRef.current = {
-        ...node,
-        position: {
-          x: node.position.x + dx,
-          y: node.position.y + dy,
-        }
-      };
-    }
-  }, [zoom]);
-
-  const handleNodeTouchEnd = useCallback(() => {
-    if (isTouchDraggingNodeRef.current) {
-      isTouchDraggingNodeRef.current = false;
-      touchDragNodeRef.current = null;
-      touchStartPosRef.current = null;
-
-      if (wasDragging) {
-        if (dragTimeoutRef.current) {
-          clearTimeout(dragTimeoutRef.current);
-        }
-        dragTimeoutRef.current = setTimeout(() => {
-          setWasDragging(false);
-        }, 100);
-      }
-    }
-  }, [wasDragging]);
-
-  // Global touch listeners for node dragging
-  useEffect(() => {
-    if (isTouchDevice()) {
-      document.addEventListener('touchmove', handleNodeTouchMove, { passive: false });
-      document.addEventListener('touchend', handleNodeTouchEnd);
-      document.addEventListener('touchcancel', handleNodeTouchEnd);
-
-      return () => {
-        document.removeEventListener('touchmove', handleNodeTouchMove);
-        document.removeEventListener('touchend', handleNodeTouchEnd);
-        document.removeEventListener('touchcancel', handleNodeTouchEnd);
-      };
-    }
-  }, [handleNodeTouchMove, handleNodeTouchEnd]);
 
   const zoomIn = () => {
     setZoom(prev => Math.min(3, prev + 0.1));
@@ -951,7 +772,6 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
           nodeHeight={nodeSize.height}
           onClick={(e) => handleNodeClick(e, node)}
           onStartDrag={(node: TodoNode, event: React.MouseEvent) => handleStartDrag(node, event)}
-          onTouchStartDrag={(node: TodoNode, event: React.TouchEvent) => handleNodeTouchStart(node, event)}
           onStatusChange={(status: NodeStatus) => updateNodeStatus(node.id, status)}
           onAddNodeAtAngle={(angle: number) => addNodeAtAngle(node.id, angle)}
           onAddNodeAtPosition={(screenX: number, screenY: number) => addNodeAtPosition(node.id, screenX, screenY)}
@@ -982,12 +802,8 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
       onMouseLeave={handleMouseUp}
       onClick={handleCanvasClick}
       onWheel={handleWheel}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
       style={{
         cursor: isPanning ? 'grabbing' : 'grab',
-        touchAction: 'none', // Prevent browser handling of touch gestures
       }}
       data-component-name="BrainMap"
     >

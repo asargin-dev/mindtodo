@@ -5,7 +5,6 @@ import {
   setLocalStorageMapsMeta,
   getLocalStorageMapsMeta,
   setLocalStorageNodes,
-  getLocalStorageNodes,
   createMockMapMeta,
   createMockRootNode,
   createMockNode,
