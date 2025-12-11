@@ -12,6 +12,7 @@ interface SidebarProps {
   onExport: () => void
   onImport: (data: string) => Promise<boolean>
   getProgress: (id: string) => number // 0-100
+  progressVersion?: number // Triggers re-render when progress changes
   collapsed: boolean
   onToggleCollapse: () => void
 }
@@ -25,6 +26,7 @@ export function Sidebar({
   onExport,
   onImport,
   getProgress,
+  progressVersion: _progressVersion, // Used to trigger re-render, not directly accessed
   collapsed,
   onToggleCollapse,
 }: SidebarProps) {
@@ -64,7 +66,7 @@ export function Sidebar({
       )}
       
       <div
-        className={`fixed inset-y-0 left-0 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 
+        className={`fixed inset-y-0 left-0 flex flex-col bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900
           text-white transition-all duration-500 ease-in-out z-40 shadow-2xl border-r border-slate-700/50
           ${collapsed ? '-translate-x-full' : 'translate-x-0'} w-80`}
       >
@@ -201,68 +203,66 @@ export function Sidebar({
             </div>
           )}
 
-          {/* Create new map form */}
-          {creating ? (
-            <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 rounded-2xl border border-slate-700/50 p-4">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  handleCreate()
-                }}
-                className="space-y-3"
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="h-px bg-gradient-to-r from-blue-500 to-purple-500 flex-1" />
-                  <span className="text-xs font-medium text-slate-300">Yeni Harita</span>
-                  <div className="h-px bg-gradient-to-r from-purple-500 to-blue-500 flex-1" />
-                </div>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  className="w-full bg-slate-700/50 border border-slate-600/50 rounded-xl px-4 py-3 text-sm 
-                    focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 
-                    placeholder:text-slate-400 transition-all duration-200"
-                  placeholder="Harita adını girin..."
-                  autoFocus
-                />
-                <div className="flex gap-2">
-                  <Button 
-                    type="submit" 
-                    className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-xl"
-                    disabled={!newName.trim()}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Oluştur
-                  </Button>
-                  <Button 
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {setCreating(false); setNewName('')}}
-                    className="rounded-xl bg-slate-700/50 hover:bg-red-500/20 hover:text-red-400 border border-slate-600/50 transition-all duration-200"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </form>
-            </div>
-          ) : (
-            <Button 
-              variant="outline" 
-              className="w-full rounded-2xl border-2 border-dashed border-slate-600 hover:border-blue-500/50 
-                hover:bg-gradient-to-r hover:from-blue-900/20 hover:to-purple-900/20 transition-all duration-300
-                py-6 text-slate-300 hover:text-white group"
-              onClick={() => setCreating(true)}
-            >
-              <Plus className="h-5 w-5 mr-2 group-hover:scale-110 transition-transform" />
-              Yeni MindTodo Oluştur
-            </Button>
-          )}
         </div>
 
         {/* Footer with gradient */}
         <div className="p-4 border-t border-slate-700/30">
           <div className="space-y-3">
+            {/* Create new map button/form */}
+            {creating ? (
+              <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 rounded-xl border border-slate-700/50 p-3">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    handleCreate()
+                  }}
+                  className="space-y-2"
+                >
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    className="w-full bg-slate-700/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm
+                      focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50
+                      placeholder:text-slate-400 transition-all duration-200"
+                    placeholder="Harita adını girin..."
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="submit"
+                      size="sm"
+                      className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg"
+                      disabled={!newName.trim()}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Oluştur
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {setCreating(false); setNewName('')}}
+                      className="rounded-lg bg-slate-700/50 hover:bg-red-500/20 hover:text-red-400"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                className="w-full rounded-xl border border-dashed border-slate-600 hover:border-blue-500/50
+                  bg-slate-800/30 hover:bg-gradient-to-r hover:from-blue-900/30 hover:to-purple-900/30
+                  transition-all duration-300 py-3 text-slate-300 hover:text-white group"
+                onClick={() => setCreating(true)}
+              >
+                <Plus className="h-4 w-4 mr-2 group-hover:scale-110 transition-transform" />
+                Yeni MindTodo Oluştur
+              </Button>
+            )}
+
             {/* Import/Export buttons */}
             <div className="flex gap-2">
               <Button

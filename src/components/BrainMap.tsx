@@ -3,7 +3,6 @@ import { Plus, Minus, Maximize } from 'lucide-react';
 import { Button } from './ui/button';
 import { TodoNode, Connection, NodeStatus } from '../types';
 import { NodeComponent } from './NodeComponent';
-import { TodoDialog } from './TodoDialog';
 
 interface Position {
   x: number;
@@ -14,6 +13,7 @@ interface BrainMapProps {
   mapId: string;
   mapName: string;
   onRootTitleChange?: (title: string) => void;
+  onNodesChange?: () => void;
 }
 
 const ROOT_TITLES = new Set(['My Tasks', 'Work', 'Personal']);
@@ -77,12 +77,10 @@ interface StatusSummary {
   total: number;
 }
 
-export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
+export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: BrainMapProps) {
   const [nodes, setNodes] = useState<TodoNode[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [selectedNode, setSelectedNode] = useState<TodoNode | null>(null);
-  const [connectingMode, setConnectingMode] = useState<string | null>(null);
-  const [showTodoDialog, setShowTodoDialog] = useState(false);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeContainerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -94,7 +92,6 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   const [isPanning, setIsPanning] = useState(false);
   const [wasDragging, setWasDragging] = useState(false);
   const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const [mousePosition, setMousePosition] = useState<Position>({ x: 0, y: 0 });
 
   const mapNameRef = useRef(mapName);
   useEffect(() => {
@@ -126,7 +123,7 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   useEffect(() => {
     const savedNodes = localStorage.getItem(nodesKey);
     const savedConnections = localStorage.getItem(connectionsKey);
-    
+
     if (savedNodes) {
       try {
         const parsedNodes = JSON.parse(savedNodes);
@@ -151,14 +148,12 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
         }
       } catch (e) {
         console.error('Error parsing saved nodes:', e);
-        // Hata durumunda otomatik olarak My Tasks oluştur
         createRootNode();
       }
     } else {
-      // Kayıtlı node yoksa otomatik olarak My Tasks oluştur
       createRootNode();
     }
-    
+
     if (savedConnections) {
       try {
         const parsedConnections = JSON.parse(savedConnections);
@@ -173,11 +168,13 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   useEffect(() => {
     if (nodes.length > 0) {
       localStorage.setItem(nodesKey, JSON.stringify(nodes));
+      // Notify parent AFTER localStorage is updated (so sidebar reads fresh data)
+      onNodesChange?.();
     }
     if (connections.length > 0) {
       localStorage.setItem(connectionsKey, JSON.stringify(connections));
     }
-  }, [nodes, connections, nodesKey, connectionsKey]);
+  }, [nodes, connections, nodesKey, connectionsKey, onNodesChange]);
 
   const createRootNode = (overrideTitle?: string) => {
     const rootTitle = getRootTitle(overrideTitle);
@@ -188,160 +185,145 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
       status: DEFAULT_STATUS,
       isRoot: true,
     };
-    
+
     setNodes([newNode]);
     return newNode;
   };
 
-  const addNode = (parentId: string) => {
+  // Add node at a specific angle from parent (free-form positioning)
+  const addNodeAtAngle = (parentId: string, angle: number) => {
     const parentNode = nodes.find(node => node.id === parentId);
     if (!parentNode) return;
-    
-    // Position the new node near the parent node but with some offset
-    const offset = Math.random() * 150 + 100;
-    const angle = Math.random() * Math.PI * 2;
-    
+
+    // Get parent node size for proper offset calculation
+    const parentConnectedCount = connections.filter(
+      conn => conn.sourceId === parentId || conn.targetId === parentId
+    ).length;
+    const parentSize = getNodeSize(parentNode, parentConnectedCount);
+
+    // Calculate offset - distance from parent center to new node center
+    const newNodeSize = 140; // Default size for new nodes
+    const offset = parentSize / 2 + newNodeSize / 2 + 60; // Gap between nodes
+
+    // Calculate new position based on angle
+    const newPosition: Position = {
+      x: parentNode.position.x + (parentSize - newNodeSize) / 2 + Math.cos(angle) * offset,
+      y: parentNode.position.y + (parentSize - newNodeSize) / 2 + Math.sin(angle) * offset
+    };
+
     const newNode: TodoNode = {
       id: Date.now().toString(),
-      title: 'New Node',
-      position: {
-        x: parentNode.position.x + offset * Math.cos(angle),
-        y: parentNode.position.y + offset * Math.sin(angle)
-      },
+      title: '',
+      position: newPosition,
       status: DEFAULT_STATUS,
       isRoot: false,
     };
-    
-    // Create a connection from parent to new node
+
+    // Create connection
     const newConnection: Connection = {
       id: `${parentNode.id}-${newNode.id}`,
       sourceId: parentNode.id,
       targetId: newNode.id
     };
-    
+
     setNodes(prev => [...prev, newNode]);
     setConnections(prev => [...prev, newConnection]);
-    
-    // Yeni node oluşturulduktan sonra dialog'u aç
-    setSelectedNode(newNode);
-    setShowTodoDialog(true);
+
+    // Start editing the new node immediately
+    setEditingNodeId(newNode.id);
   };
 
-  // Start connecting mode on a node
-  const startConnecting = (node: TodoNode) => {
-    setConnectingMode(node.id);
+  // Add node at a specific screen position (drag-to-place)
+  const addNodeAtPosition = (parentId: string, screenX: number, screenY: number) => {
+    const parentNode = nodes.find(node => node.id === parentId);
+    if (!parentNode) return;
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    // Convert screen coordinates to canvas coordinates
+    const relX = screenX - rect.left;
+    const relY = screenY - rect.top;
+    const canvasX = (relX - pan.x) / zoom;
+    const canvasY = (relY - pan.y) / zoom;
+
+    // Center the new node on the cursor position
+    const newNodeSize = 140;
+    const newPosition: Position = {
+      x: canvasX - newNodeSize / 2,
+      y: canvasY - newNodeSize / 2
+    };
+
+    const newNode: TodoNode = {
+      id: Date.now().toString(),
+      title: '',
+      position: newPosition,
+      status: DEFAULT_STATUS,
+      isRoot: false,
+    };
+
+    // Create connection from parent to new node
+    const newConnection: Connection = {
+      id: `${parentNode.id}-${newNode.id}`,
+      sourceId: parentNode.id,
+      targetId: newNode.id
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setConnections(prev => [...prev, newConnection]);
+
+    // Start editing the new node immediately
+    setEditingNodeId(newNode.id);
   };
 
-  // Create a connection between two nodes
-  // This function is now unused as we handle connections directly in handleNodeClick
-  // const completeConnection = (source: TodoNode, target: TodoNode) => {
-  //   const connectionExists = connections.some(conn => 
-  //     (conn.sourceId === source.id && conn.targetId === target.id) ||
-  //     (conn.sourceId === target.id && conn.targetId === source.id)
-  //   );
-    
-  //   if (!connectionExists) {
-  //     const newConnection: Connection = {
-  //       id: `${source.id}-${target.id}`,
-  //       sourceId: source.id,
-  //       targetId: target.id
-  //     };
-      
-  //     setConnections(prev => [...prev, newConnection]);
-  //   }
-  // };
-
-  // Handle node click - either open dialog or complete connection
+  // Handle node click - no longer opens dialog, just handles selection
   const handleNodeClick = (event: React.MouseEvent, node: TodoNode) => {
     event.preventDefault();
     event.stopPropagation();
-    
-    // Sadece gerçekten sürükleme olduysa click'i ignore et
+
     if (wasDragging) {
       return;
     }
 
-    // Check if this is a root node
-    const isRoot = isRootNode(node);
-
-    // If we're in connecting mode, handle connection logic
-    if (connectingMode) {
-      if (connectingMode === node.id) {
-        setConnectingMode(null);
-        return;
-      }
-
-      // Create new connection
-      const newConnection: Connection = {
-        id: `${connectingMode}-${node.id}`,
-        sourceId: connectingMode,
-        targetId: node.id
-      };
-
-      // Check if connection already exists
-      const connectionExists = connections.some(
-        conn => 
-          (conn.sourceId === connectingMode && conn.targetId === node.id) ||
-          (conn.sourceId === node.id && conn.targetId === connectingMode)
-      );
-
-      if (!connectionExists) {
-        setConnections(prev => [...prev, newConnection]);
-      }
-      
-      setConnectingMode(null);
-    } else {
-      // Eğer tıklanan element button değilse dialog'u aç
-      const target = event.target as HTMLElement;
-      if (!target.closest('button')) {
-        // Only open todo dialog if it's not a root node
-        if (!isRoot) {
-          setSelectedNode(node);
-          setShowTodoDialog(true);
-        }
-      }
+    // Don't do anything if clicking buttons or currently editing
+    const target = event.target as HTMLElement;
+    if (target.closest('button') || target.closest('input') || editingNodeId === node.id) {
+      return;
     }
   };
 
-  // Handle mouse move for dragging, panning, and connection tracking
+  // Start editing a node's title
+  const startEditingNode = (nodeId: string) => {
+    setEditingNodeId(nodeId);
+  };
+
+  // Handle mouse move for dragging and panning
   const handleMouseMove = (event: React.MouseEvent) => {
-    // Update mouse position for temp connections
-    if (canvasRef.current) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      const mouseX = (event.clientX - rect.left - pan.x) / zoom;
-      const mouseY = (event.clientY - rect.top - pan.y) / zoom;
-      setMousePosition({ x: mouseX, y: mouseY });
-    }
-    
     if (isDragging && dragNode) {
-      // Mouse hareket ettiğinde wasDragging'i true yap
       setWasDragging(true);
-      
-      // Calculate the movement delta
+
       const dx = (event.clientX - initialClickPos.x) / zoom;
       const dy = (event.clientY - initialClickPos.y) / zoom;
-      
-      // Update node position immediately using transform
+
       const nodeElement = document.querySelector(`[data-node-id="${dragNode.id}"]`);
       if (nodeElement) {
         (nodeElement as HTMLElement).style.transform = `translate(${dx}px, ${dy}px)`;
       }
-      
-      // Update the state
-      setNodes(prev => prev.map(node => 
-        node.id === dragNode.id 
-          ? { 
-              ...node, 
-              position: { 
-                x: dragNode.position.x + dx, 
-                y: dragNode.position.y + dy 
-              } 
-            } 
+
+      setNodes(prev => prev.map(node =>
+        node.id === dragNode.id
+          ? {
+              ...node,
+              position: {
+                x: dragNode.position.x + dx,
+                y: dragNode.position.y + dy
+              }
+            }
           : node
       ));
-      
+
       setInitialClickPos({ x: event.clientX, y: event.clientY });
-      
+
       const updatedDragNode = {
         ...dragNode,
         position: {
@@ -351,56 +333,46 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
       };
       setDragNode(updatedDragNode);
     }
-    
-    // Handle canvas panning
+
     if (isPanning) {
       const dx = event.clientX - lastPanPoint.x;
       const dy = event.clientY - lastPanPoint.y;
-      
+
       setPan((prevPan: Position) => ({
         x: prevPan.x + dx,
         y: prevPan.y + dy
       }));
-      
+
       setLastPanPoint({ x: event.clientX, y: event.clientY });
     }
   };
 
-  // Handle mouse down event
   const handleMouseDown = (event: React.MouseEvent) => {
-    // Get the element that was clicked
     const target = event.target as HTMLElement;
-    
-    // Get the closest node component (if any)
     const nodeElement = target.closest('[data-component-name="NodeComponent"]');
-    
-    // If not clicking on a node or button, start panning
-    if (!nodeElement && !target.closest('button')) {
+
+    if (!nodeElement && !target.closest('button') && !target.closest('input')) {
       setIsPanning(true);
       setLastPanPoint({ x: event.clientX, y: event.clientY });
       event.preventDefault();
     }
   };
 
-  // End dragging or panning
   const handleMouseUp = () => {
     if (isDragging) {
       setIsDragging(false);
       setDragNode(null);
-      
-      // Eğer gerçekten sürükleme olduysa (wasDragging true ise)
+
       if (wasDragging) {
-        // Önceki timeout'u temizle
         if (dragTimeoutRef.current) {
           clearTimeout(dragTimeoutRef.current);
         }
-        // Yeni timeout oluştur
         dragTimeoutRef.current = setTimeout(() => {
           setWasDragging(false);
         }, 100);
       }
     }
-    
+
     if (isPanning) {
       setIsPanning(false);
     }
@@ -425,7 +397,6 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
 
   const handleStartDrag = (node: TodoNode, event: React.MouseEvent) => {
     event.stopPropagation();
-    // Mouse hareket etmeye başlamadan önce wasDragging'i false yap
     setWasDragging(false);
     setDragNode(node);
     setInitialClickPos({ x: event.clientX, y: event.clientY });
@@ -436,58 +407,51 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
     handleMouseDown(event);
   };
 
-  // Handle canvas click - REMOVED automatic node creation
   const handleCanvasClick = (event: React.MouseEvent) => {
-    // We no longer create nodes on canvas clicks
-    // Instead, we now only handle connecting mode here
-    
-    // Don't do anything if there's a todo dialog open
-    if (showTodoDialog) {
-      return;
-    }
-    
-    // Check if we're clicking on a node, button, or dialog element
     const target = event.target as HTMLElement;
     if (
-      target.closest('.TodoDialog') || 
-      target.closest('[data-component-name="NodeComponent"]') || 
+      target.closest('[data-component-name="NodeComponent"]') ||
       target.closest('button') ||
+      target.closest('input') ||
       target.tagName.toLowerCase() === 'input' ||
       target.tagName.toLowerCase() === 'form'
     ) {
       return;
     }
-    
-    // If we're in connecting mode, exit it when clicking on empty canvas
-    if (connectingMode) {
-      setConnectingMode(null);
+
+    // Click on empty canvas clears editing mode
+    if (editingNodeId) {
+      setEditingNodeId(null);
     }
-    
-    // We no longer create nodes on canvas clicks
-    // addNodeAtPosition(clickPosition);
   };
 
   const handleWheel = (event: React.WheelEvent) => {
     event.preventDefault();
-    
-    // Calculate new zoom level
-    const delta = event.deltaY < 0 ? 0.1 : -0.1;
-    const newZoom = Math.max(0.1, Math.min(3, zoom + delta));
-    
-    // Get mouse position relative to the canvas
+
+    // Smooth zoom: proportional to scroll amount with damping
+    const scrollDelta = event.deltaY;
+    const zoomSensitivity = 0.001; // Lower = smoother
+    const dampingFactor = 0.5; // Reduces large jumps
+
+    // Calculate proportional zoom change (negative deltaY = zoom in)
+    let zoomChange = -scrollDelta * zoomSensitivity * zoom * dampingFactor;
+
+    // Clamp the zoom change to prevent huge jumps
+    zoomChange = Math.max(-0.15, Math.min(0.15, zoomChange));
+
+    const newZoom = Math.max(0.1, Math.min(3, zoom + zoomChange));
+
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    
+
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
-    
-    // Calculate how the point under the mouse should move to stay in the same position after zoom
+
     const scaleChange = newZoom / zoom;
-    
-    // Adjust pan to keep the point under mouse in the same position
+
     const newPanX = (mouseX - pan.x) * (1 - scaleChange) + pan.x;
     const newPanY = (mouseY - pan.y) * (1 - scaleChange) + pan.y;
-    
+
     setPan({ x: newPanX, y: newPanY });
     setZoom(newZoom);
   };
@@ -495,11 +459,11 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   const zoomIn = () => {
     setZoom(prev => Math.min(3, prev + 0.1));
   };
-  
+
   const zoomOut = () => {
     setZoom(prev => Math.max(0.1, prev - 0.1));
   };
-  
+
   const resetView = () => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -545,51 +509,36 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   };
 
   const deleteNode = (nodeId: string) => {
-    // Delete the node
     setNodes(prev => prev.filter(node => node.id !== nodeId));
-    
-    // Delete all connections connected to this node
-    setConnections(prev => 
+    setConnections(prev =>
       prev.filter(conn => conn.sourceId !== nodeId && conn.targetId !== nodeId)
     );
-    
-    setShowTodoDialog(false);
+    setEditingNodeId(null);
   };
 
   const resetBrainMap = () => {
-    // Create a new root node positioned in the center of the screen
     const rootTitle = getRootTitle();
     const rootNode: TodoNode = {
-      id: Date.now().toString(), // Use timestamp to ensure unique ID
+      id: Date.now().toString(),
       title: rootTitle,
-      position: { 
-        x: window.innerWidth / 2 - 60, 
-        y: window.innerHeight / 2 - 60 
+      position: {
+        x: window.innerWidth / 2 - 60,
+        y: window.innerHeight / 2 - 60
       },
       status: DEFAULT_STATUS,
       isRoot: true,
     };
-    
-    // Clear all state in a specific order
+
     setConnections([]);
-    setSelectedNode(null);
-    setConnectingMode(null);
-    setShowTodoDialog(false);
-    
-    // Reset view parameters
+    setEditingNodeId(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    
-    // Set the new node last to trigger a re-render
     setNodes([rootNode]);
-    
-    // Update localStorage with the reset state
+
     localStorage.removeItem(nodesKey);
     localStorage.removeItem(connectionsKey);
     localStorage.setItem(nodesKey, JSON.stringify([rootNode]));
     localStorage.setItem(connectionsKey, JSON.stringify([]));
-    
-    console.log('Brain map reset!', rootNode);
 
     if (onRootTitleChange) {
       onRootTitleChange(rootTitle);
@@ -639,12 +588,12 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   // Render connections as SVG lines
   const renderConnections = () => {
     if (connections.length === 0) return null;
-    
+
     return (
-      <svg 
+      <svg
         className="absolute inset-0 pointer-events-none"
-        style={{ 
-          width: '100%', 
+        style={{
+          width: '100%',
           height: '100%',
           overflow: 'visible',
           zIndex: 1
@@ -653,7 +602,7 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
         {connections.map(conn => {
           const sourceNode = nodes.find(node => node.id === conn.sourceId);
           const targetNode = nodes.find(node => node.id === conn.targetId);
-          
+
           if (!sourceNode || !targetNode) return null;
 
           const sourceConnectedCount = connections.filter(
@@ -666,28 +615,24 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
 
           const sourceSize = getNodeSize(sourceNode, sourceConnectedCount);
           const targetSize = getNodeSize(targetNode, targetConnectedCount);
-          
-          // Calculate center points
+
           const startX = sourceNode.position.x + (sourceSize / 2);
           const startY = sourceNode.position.y + (sourceSize / 2);
           const endX = targetNode.position.x + (targetSize / 2);
           const endY = targetNode.position.y + (targetSize / 2);
-          
-          // Calculate direction vector
+
           const dx = endX - startX;
           const dy = endY - startY;
           const distance = Math.sqrt(dx * dx + dy * dy);
-          
-          // Daha hassas radius hesaplaması
-          const sourceRadius = (sourceSize / 2) - 2; // 2px offset ekle
-          const targetRadius = (targetSize / 2) - 2; // 2px offset ekle
-          
-          // Adjust start and end points with more precise calculation
+
+          const sourceRadius = (sourceSize / 2) - 2;
+          const targetRadius = (targetSize / 2) - 2;
+
           const startPointX = startX + (dx / distance) * sourceRadius;
           const startPointY = startY + (dy / distance) * sourceRadius;
           const endPointX = endX - (dx / distance) * targetRadius;
           const endPointY = endY - (dy / distance) * targetRadius;
-          
+
           return (
             <line
               key={conn.id}
@@ -698,70 +643,12 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
               stroke="#60a5fa"
               strokeWidth={3}
               strokeLinecap="round"
-              strokeDasharray={connectingMode ? "5,5" : "none"}
               style={{
                 filter: 'drop-shadow(0 2px 4px rgba(96, 165, 250, 0.3))'
               }}
             />
           );
         })}
-      </svg>
-    );
-  };
-
-  // Temporary line when in connecting mode
-  const renderTempConnection = () => {
-    if (!connectingMode) return null;
-    
-    const sourceNode = nodes.find(node => node.id === connectingMode);
-    if (!sourceNode) return null;
-    
-    const sourceConnectedCount = connections.filter(
-      conn => conn.sourceId === sourceNode.id || conn.targetId === sourceNode.id
-    ).length;
-
-    const sourceSize = getNodeSize(sourceNode, sourceConnectedCount);
-      
-    const startX = sourceNode.position.x + sourceSize / 2;
-    const startY = sourceNode.position.y + sourceSize / 2;
-    
-    // Use actual mouse position for temp connection endpoint
-    const mouseX = mousePosition.x;
-    const mouseY = mousePosition.y;
-    
-    // Calculate direction vector
-    const dx = mouseX - startX;
-    const dy = mouseY - startY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    
-    // Adjust start point to be on the edge of the circular node
-    const sourceRadius = sourceSize / 2;
-    const startPointX = startX + (dx / distance) * sourceRadius;
-    const startPointY = startY + (dy / distance) * sourceRadius;
-    
-    return (
-      <svg 
-        className="absolute inset-0 pointer-events-none"
-        style={{ 
-          width: '100%', 
-          height: '100%',
-          overflow: 'visible',
-          zIndex: 1
-        }}
-      >
-        <line
-          x1={startPointX}
-          y1={startPointY}
-          x2={mouseX}
-          y2={mouseY}
-          stroke="#60a5fa"
-          strokeWidth={3}
-          strokeLinecap="round"
-          strokeDasharray="5,5"
-          style={{
-            filter: 'drop-shadow(0 2px 4px rgba(96, 165, 250, 0.3))'
-          }}
-        />
       </svg>
     );
   };
@@ -775,30 +662,31 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
 
       const statusSummary = isRootNode(node) ? calculateStatusSummary(node.id) : undefined;
       const nodeSize = getNodeSize(node, connectedNodesCount);
-       
+
       return (
         <NodeComponent
           key={node.id}
           node={node}
-          isSelected={selectedNode?.id === node.id}
-          isConnecting={connectingMode !== null}
+          isConnecting={false}
           isDragging={isDragging && dragNode?.id === node.id}
+          isEditing={editingNodeId === node.id}
           connectedNodesCount={connectedNodesCount}
           statusSummary={statusSummary}
           size={nodeSize}
           onClick={(e) => handleNodeClick(e, node)}
           onStartDrag={(node: TodoNode, event: React.MouseEvent) => handleStartDrag(node, event)}
-          onAddNode={() => addNode(node.id)}
-          onConnect={() => startConnecting(node)}
+          onStatusChange={(status: NodeStatus) => updateNodeStatus(node.id, status)}
+          onAddNodeAtAngle={(angle: number) => addNodeAtAngle(node.id, angle)}
+          onAddNodeAtPosition={(screenX: number, screenY: number) => addNodeAtPosition(node.id, screenX, screenY)}
+          onTitleChange={(title: string) => updateNodeTitle(node.id, title)}
+          onStartEditing={() => startEditingNode(node.id)}
+          onFinishEditing={() => setEditingNodeId(null)}
+          onDeleteNode={() => deleteNode(node.id)}
         />
       );
     });
   };
 
-  // showStartScreen ile ilgili render kısmını kaldıralım
-  // if (showStartScreen) { ... } bloğunu tamamen silelim
-
-  // Component unmount olduğunda timeout'u temizle
   useEffect(() => {
     return () => {
       if (dragTimeoutRef.current) {
@@ -808,9 +696,9 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
   }, []);
 
   return (
-    <div 
+    <div
       ref={canvasRef}
-      className="fixed inset-0 overflow-hidden bg-gray-900"
+      className="fixed inset-0 overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900"
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseDown={handleCanvasMouseDown}
@@ -818,56 +706,69 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
       onClick={handleCanvasClick}
       onWheel={handleWheel}
       style={{
-        cursor: connectingMode ? 'crosshair' : (isPanning ? 'grabbing' : 'grab')
+        cursor: isPanning ? 'grabbing' : 'grab'
       }}
       data-component-name="BrainMap"
     >
-      {/* Background grid pattern with zoom effect */}
-      <div 
-        className="absolute inset-0" 
-        style={{ 
-          backgroundImage: `radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px), 
-                           radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px)`,
+      {/* Background grid pattern */}
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: `radial-gradient(rgba(148, 163, 184, 0.15) 1px, transparent 1px),
+                           radial-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px)`,
           backgroundSize: `${20 * zoom}px ${20 * zoom}px, ${10 * zoom}px ${10 * zoom}px`,
           backgroundPosition: `${pan.x}px ${pan.y}px, ${pan.x}px ${pan.y}px`
         }}
       />
-      
-      {/* Zoom controls */}
-      <div className="fixed bottom-6 right-6 flex flex-col space-y-2 z-50">
-        <Button 
-          size="icon"
-          onClick={zoomIn} 
-          className="bg-gray-800 hover:bg-gray-700 text-white"
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
-        <Button 
-          size="icon" 
-          onClick={zoomOut}
-          className="bg-gray-800 hover:bg-gray-700 text-white"
-        >
-          <Minus className="h-4 w-4" />
-        </Button>
-        <Button 
-          size="icon" 
-          onClick={resetView}
-          className="bg-gray-800 hover:bg-gray-700 text-white"
-        >
-          <Maximize className="h-4 w-4" />
-        </Button>
+
+      {/* Subtle ambient light effects */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
       </div>
-      
+
+      {/* Zoom controls */}
+      <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-50">
+        <div className="flex flex-col gap-1 p-1.5 rounded-2xl bg-slate-800/80 backdrop-blur-xl border border-slate-700/50 shadow-xl">
+          <Button
+            size="icon"
+            onClick={zoomIn}
+            className="h-10 w-10 rounded-xl bg-transparent hover:bg-white/10 text-slate-300 hover:text-white transition-all"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+          <div className="h-px bg-slate-700/50 mx-2" />
+          <Button
+            size="icon"
+            onClick={zoomOut}
+            className="h-10 w-10 rounded-xl bg-transparent hover:bg-white/10 text-slate-300 hover:text-white transition-all"
+          >
+            <Minus className="h-4 w-4" />
+          </Button>
+          <div className="h-px bg-slate-700/50 mx-2" />
+          <Button
+            size="icon"
+            onClick={resetView}
+            className="h-10 w-10 rounded-xl bg-transparent hover:bg-white/10 text-slate-300 hover:text-white transition-all"
+          >
+            <Maximize className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="text-center text-xs text-slate-500 font-medium">
+          {Math.round(zoom * 100)}%
+        </div>
+      </div>
+
       {/* Reset button */}
       <div className="fixed top-6 right-6 z-50">
-        <Button 
+        <Button
           onClick={resetBrainMap}
-          variant="destructive"
+          className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/20 hover:border-rose-500/30 backdrop-blur-sm rounded-xl px-4 py-2 text-sm transition-all"
         >
-          Reset Brain Map
+          Sıfırla
         </Button>
       </div>
-      
+
       {/* Node container with transform */}
       <div
         ref={nodeContainerRef}
@@ -875,34 +776,21 @@ export function BrainMap({ mapId, mapName, onRootTitleChange }: BrainMapProps) {
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: '0 0',
+          transition: isPanning || isDragging ? 'none' : 'transform 0.08s ease-out',
         }}
         data-component-name="BrainMap"
       >
-        {/* Render all connections first (lower z-index) */}
+        {/* Render all connections first */}
         <div className="absolute inset-0" style={{ zIndex: 1 }}>
           {renderConnections()}
-          {renderTempConnection()}
         </div>
-        
-        {/* Render all nodes on top (higher z-index) */}
+
+        {/* Render all nodes on top */}
         <div className="absolute inset-0" style={{ zIndex: 10 }}>
           {renderNodes()}
         </div>
       </div>
-      
-      {/* Todo Dialog */}
-      {showTodoDialog && selectedNode && (
-        <TodoDialog
-          node={selectedNode}
-          onClose={() => {
-            setShowTodoDialog(false);
-            setSelectedNode(null);
-          }}
-          onUpdateTitle={(title: string) => updateNodeTitle(selectedNode.id, title)}
-          onUpdateStatus={(status: NodeStatus) => updateNodeStatus(selectedNode.id, status)}
-          onDeleteNode={() => deleteNode(selectedNode.id)}
-        />
-      )}
+
     </div>
   );
 }

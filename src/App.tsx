@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { MapMeta, TodoNode } from './types'
 import { Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'
-import './App.css'
+import { Brain, Sparkles } from 'lucide-react'
 
 const MAPS_META_KEY = 'mindtodo-maps-meta'
 
@@ -45,9 +45,16 @@ function App() {
   const [maps, setMaps] = useState<MapMeta[]>([])
   const [selectedMapId, setSelectedMapId] = useState<string>('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  const [progressVersion, setProgressVersion] = useState(0) // Triggers sidebar progress refresh
+  const [isInitialized, setIsInitialized] = useState(false) // Prevents save-before-load race condition
   const selectedMap = maps.find((map) => map.id === selectedMapId)
 
-  // Load maps meta on mount
+  // Callback for BrainMap to signal node changes (status updates, additions, deletions)
+  const handleNodesChange = useCallback(() => {
+    setProgressVersion(v => v + 1)
+  }, [])
+
+  // Load maps meta on mount - MUST complete before save effect runs
   useEffect(() => {
     const raw = localStorage.getItem(MAPS_META_KEY)
     if (raw) {
@@ -61,12 +68,15 @@ function App() {
         console.error('Failed to parse maps meta', e)
       }
     }
+    // Mark as initialized AFTER load attempt - this allows save effect to proceed
+    setIsInitialized(true)
   }, [])
 
-  // Persist meta
+  // Persist meta - ONLY after initial load to prevent overwriting with empty array
   useEffect(() => {
+    if (!isInitialized) return // Guard: don't save until load effect completes
     localStorage.setItem(MAPS_META_KEY, JSON.stringify(maps))
-  }, [maps])
+  }, [maps, isInitialized])
 
   const createMap = (name: string) => {
     const id = Date.now().toString()
@@ -214,7 +224,8 @@ function App() {
   }
 
   return (
-    <div className="app flex">
+    <>
+      {/* Sidebar - fixed positioned, outside main flow */}
       <Sidebar
         maps={maps}
         selectedMapId={selectedMapId}
@@ -224,55 +235,78 @@ function App() {
         onExport={exportData}
         onImport={importData}
         getProgress={getMapProgress}
+        progressVersion={progressVersion}
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebar}
       />
 
-      <div className="flex-1 relative" style={{ marginLeft: sidebarCollapsed ? 0 : '20rem' }}>
-        {/* Hamburger menu button - always visible with better design */}
+      {/* Main content area - uses padding to account for fixed sidebar */}
+      <main
+        className="min-h-screen w-full transition-all duration-500 ease-in-out"
+        style={{ paddingLeft: sidebarCollapsed ? 0 : '20rem' }}
+      >
+        {/* Hamburger menu button - shown when sidebar collapsed */}
         {sidebarCollapsed && (
-          <div className="fixed top-4 left-4 z-50 transition-all duration-300">
+          <div className="fixed top-4 left-4 z-50">
             <Button
               variant="ghost"
               size="icon"
-              className={`relative h-12 w-12 rounded-xl transition-all duration-300 hover:scale-110 group hamburger-pulse bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-lg border border-slate-700/50 shadow-2xl hover:shadow-blue-500/20`}
+              className="relative h-12 w-12 rounded-xl transition-all duration-300 hover:scale-110 group hamburger-pulse bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-lg border border-slate-700/50 shadow-2xl hover:shadow-blue-500/20"
               onClick={toggleSidebar}
             >
-              {/* Animated hamburger icon with glow effect */}
               <div className="flex flex-col gap-1.5 items-center justify-center hamburger-gradient">
                 <div className="h-0.5 w-5 bg-gradient-to-r from-blue-400 to-purple-400 rounded-full transition-all duration-300 group-hover:w-6 group-hover:shadow-lg group-hover:shadow-blue-400/50" />
                 <div className="h-0.5 w-4 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full transition-all duration-300 group-hover:w-6 group-hover:shadow-lg group-hover:shadow-purple-400/50" />
                 <div className="h-0.5 w-5 bg-gradient-to-r from-pink-400 to-blue-400 rounded-full transition-all duration-300 group-hover:w-6 group-hover:shadow-lg group-hover:shadow-pink-400/50" />
               </div>
-              
-              {/* Pulse animation ring */}
               <div className="absolute inset-0 rounded-xl border-2 border-blue-400/0 group-hover:border-blue-400/30 transition-all duration-300" />
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-blue-400/0 to-purple-400/0 group-hover:from-blue-400/10 group-hover:to-purple-400/10 transition-all duration-300" />
             </Button>
-            
-            {/* Tooltip when sidebar is collapsed */}
-            <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-              <div className="bg-slate-800 text-white text-sm px-3 py-1.5 rounded-lg shadow-lg border border-slate-700/50 whitespace-nowrap">
-                MindTodos Menüsünü Aç
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1 w-2 h-2 bg-slate-800 border-l border-b border-slate-700/50 rotate-45" />
-              </div>
-            </div>
           </div>
         )}
+
+        {/* Content: Either BrainMap or Empty State */}
         {selectedMapId ? (
           <BrainMap
             key={selectedMapId}
             mapId={selectedMapId}
             mapName={selectedMap?.name ?? 'My Tasks'}
             onRootTitleChange={handleRootTitleChange}
+            onNodesChange={handleNodesChange}
           />
         ) : (
-          <div className="h-screen w-full flex items-center justify-center text-gray-500">
-            Henüz MindTodo yok. Soldan ekleyebilirsiniz.
+          <div className="min-h-screen w-full flex items-center justify-center relative">
+            {/* Background decorative elements */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+              <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
+              <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-r from-blue-500/5 to-purple-500/5 rounded-full blur-3xl" />
+            </div>
+
+            {/* Content */}
+            <div className="relative z-10 text-center px-6">
+              <div className="relative inline-block mb-8">
+                <div className="p-6 rounded-3xl bg-gradient-to-br from-blue-500/20 to-purple-600/20 border border-slate-700/50 backdrop-blur-sm">
+                  <Brain className="h-16 w-16 text-blue-400" />
+                </div>
+                <div className="absolute -top-2 -right-2 p-2 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 shadow-lg">
+                  <Sparkles className="h-4 w-4 text-white" />
+                </div>
+              </div>
+
+              <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-4">
+                MindTodo'ya Hoş Geldiniz
+              </h2>
+              <p className="text-slate-400 text-lg mb-2">
+                Düşüncelerinizi görselleştirin, hedeflerinizi takip edin
+              </p>
+              <p className="text-slate-500 text-sm">
+                Başlamak için yeni bir MindTodo oluşturun
+              </p>
+            </div>
           </div>
         )}
-      </div>
-    </div>
+      </main>
+    </>
   )
 }
 

@@ -118,39 +118,41 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    background-color: #0f172a;
+    overscroll-behavior: none;
+  }
+  html, body, #root {
+    @apply min-h-screen w-full;
+    background: linear-gradient(to bottom right, #0f172a, #1e293b, #0f172a);
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
 }
 
-/* App specific styles */
-.app {
-  min-height: 100vh;
-  overflow-x: hidden;
-  
-  /* Custom scrollbar styles */
-  .scrollbar-thin {
-    scrollbar-width: thin;
-  }
-  
-  .scrollbar-track-slate-800::-webkit-scrollbar-track {
-    background: rgb(30 41 59);
-    border-radius: 8px;
-  }
-  
-  .scrollbar-thumb-slate-600::-webkit-scrollbar-thumb {
-    background: rgb(71 85 105);
-    border-radius: 8px;
-  }
-  
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  
-  .scrollbar-thumb-slate-600::-webkit-scrollbar-thumb:hover {
-    background: rgb(100 116 139);
-  }
+/* Custom scrollbar styles */
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+.scrollbar-track-slate-800::-webkit-scrollbar-track {
+  background: rgb(30 41 59);
+  border-radius: 8px;
+}
+
+.scrollbar-thumb-slate-600::-webkit-scrollbar-thumb {
+  background: rgb(71 85 105);
+  border-radius: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-thumb-slate-600::-webkit-scrollbar-thumb:hover {
+  background: rgb(100 116 139);
 }
 
 /* Node specific animations for the brain map */
