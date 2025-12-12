@@ -1,40 +1,37 @@
 import { BrainMap } from './components/BrainMap'
 import { useCallback, useEffect, useState } from 'react'
-import { MapMeta, TodoNode } from './types'
+import type { MapMeta, TodoNode } from '@/types'
 import { Sidebar } from './components/Sidebar'
 import { Button } from './components/ui/button'
 import { Brain, Sparkles } from 'lucide-react'
+import { isRootNode } from '@/lib/rootNode'
 
 const MAPS_META_KEY = 'mindtodo-maps-meta'
-
-function isRootNode(node: TodoNode) {
-  if (node.isRoot !== undefined) {
-    return node.isRoot
-  }
-  return node.id === 'root' || ['My Tasks', 'Work', 'Personal'].includes(node.title)
-}
 
 function getMapProgress(mapId: string): number {
   try {
     const nodesRaw = localStorage.getItem(`brainmap-${mapId}-nodes`)
+    const connectionsRaw = localStorage.getItem(`brainmap-${mapId}-connections`)
     if (!nodesRaw) return 0
     const nodes = JSON.parse(nodesRaw) as TodoNode[]
+    const connections = connectionsRaw ? (JSON.parse(connectionsRaw) as { sourceId: string; targetId: string }[]) : []
 
-    const hasExplicitRoot = nodes.some((node) => isRootNode(node))
+    const childrenById = new Map<string, number>()
+    for (const conn of connections) {
+      childrenById.set(conn.sourceId, (childrenById.get(conn.sourceId) ?? 0) + 1)
+    }
 
-    const trackableNodes = nodes.filter((node, index) => {
-      if (isRootNode(node)) {
-        return false
-      }
-      if (!hasExplicitRoot && index === 0) {
-        return false
-      }
+    const leafTasks = nodes.filter((node, index) => {
+      if (isRootNode(node)) return false
+      if (childrenById.get(node.id)) return false
+      // Back-compat: if no explicit root and first node is root-like, still skip it
+      if (!nodes.some((n) => isRootNode(n)) && index === 0) return false
       return true
     })
-    if (trackableNodes.length === 0) return 0
 
-    const successfulNodes = trackableNodes.filter((node) => node.status === 'success').length
-    return (successfulNodes / trackableNodes.length) * 100
+    if (leafTasks.length === 0) return 0
+    const successfulLeaves = leafTasks.filter((node) => node.status === 'success').length
+    return (successfulLeaves / leafTasks.length) * 100
   } catch (e) {
     console.error('Progress calc error', e)
     return 0
@@ -96,6 +93,12 @@ function App() {
     localStorage.setItem(MAPS_META_KEY, JSON.stringify(maps))
   }, [maps, isInitialized])
 
+  // Ensure selected map stays valid when maps change
+  useEffect(() => {
+    if (selectedMapId && maps.some((m) => m.id === selectedMapId)) return
+    setSelectedMapId(maps[0]?.id ?? '')
+  }, [maps, selectedMapId])
+
   const createMap = (name: string) => {
     const id = Date.now().toString()
     const newMeta = { id, name }
@@ -109,15 +112,6 @@ function App() {
     // Temizle localStorage
     localStorage.removeItem(`brainmap-${id}-nodes`)
     localStorage.removeItem(`brainmap-${id}-connections`)
-
-    // Eğer silinen seçiliyse, başka birini seç
-    setSelectedMapId((prevSelected) => {
-      if (prevSelected === id) {
-        const remaining = maps.filter((m) => m.id !== id)
-        return remaining[0]?.id || ''
-      }
-      return prevSelected
-    })
   }
 
   const selectMap = (id: string) => setSelectedMapId(id)

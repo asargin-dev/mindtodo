@@ -1,7 +1,7 @@
 import { ReactElement } from 'react'
 import { render, RenderOptions } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TodoNode, Connection, MapMeta, NodeStatus } from '../types'
+import type { TodoNode, Connection, MapMeta, NodeStatus } from '@/types'
 
 // Custom render function that includes common providers if needed
 const customRender = (

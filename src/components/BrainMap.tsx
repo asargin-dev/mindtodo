@@ -1,50 +1,41 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Minus, Maximize } from 'lucide-react';
-import { Button } from './ui/button';
-import { TodoNode, Connection, NodeStatus } from '../types';
-import { NodeComponent } from './NodeComponent';
-
-interface Position {
-  x: number;
-  y: number;
-}
+import type React from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, Minus, Maximize } from 'lucide-react'
+import { Button } from './ui/button'
+import type { Connection, NodeStatus, Position, TodoNode } from '@/types'
+import { NodeComponent } from './NodeComponent'
+import { ROOT_TITLES, isRootNode } from '@/lib/rootNode'
+import { getNodeSize } from '@/lib/nodeSizing'
+import { useBrainMapStorage } from './brainmap/useBrainMapStorage'
 
 interface BrainMapProps {
-  mapId: string;
-  mapName: string;
-  onRootTitleChange?: (title: string) => void;
-  onNodesChange?: () => void;
+  mapId: string
+  mapName: string
+  onRootTitleChange?: (title: string) => void
+  onNodesChange?: () => void
 }
 
-const ROOT_TITLES = new Set(['My Tasks', 'Work', 'Personal']);
-const DEFAULT_STATUS: NodeStatus = 'pending';
-
-const isRootNode = (node: TodoNode) => {
-  if (typeof node.isRoot === 'boolean') {
-    return node.isRoot;
-  }
-  return node.id === 'root' || ROOT_TITLES.has(node.title);
-};
+const DEFAULT_STATUS: NodeStatus = 'pending'
 
 const deriveStatusFromLegacyTodos = (legacyTodos: any[]): NodeStatus => {
   if (!Array.isArray(legacyTodos) || legacyTodos.length === 0) {
-    return DEFAULT_STATUS;
+    return DEFAULT_STATUS
   }
 
-  const allCompleted = legacyTodos.every((todo) => !!todo?.completed);
-  return allCompleted ? 'success' : DEFAULT_STATUS;
-};
+  const allCompleted = legacyTodos.every((todo) => !!todo?.completed)
+  return allCompleted ? 'success' : DEFAULT_STATUS
+}
 
 const normalizeNode = (node: any): TodoNode => {
   const status: NodeStatus =
     node?.status === 'success' || node?.status === 'failed' || node?.status === 'pending'
       ? node.status
-      : deriveStatusFromLegacyTodos(node?.todos);
+      : deriveStatusFromLegacyTodos(node?.todos)
 
-  const isRoot =
+  const root =
     typeof node?.isRoot === 'boolean'
       ? node.isRoot
-      : node?.id === 'root' || ROOT_TITLES.has(node?.title);
+      : node?.id === 'root' || ROOT_TITLES.has(node?.title)
 
   return {
     id: node?.id?.toString() ?? Date.now().toString(),
@@ -54,163 +45,191 @@ const normalizeNode = (node: any): TodoNode => {
         ? node.position
         : { x: 0, y: 0 },
     status,
-    isRoot,
-  };
-};
+    isRoot: root,
+  }
+}
 
 const normalizeNodes = (rawNodes: any[]): TodoNode[] => {
-  const normalized = rawNodes.map((node) => normalizeNode(node));
+  const normalized = rawNodes.map((node) => normalizeNode(node))
 
   if (!normalized.some((node) => node.isRoot)) {
     if (normalized.length > 0) {
-      normalized[0] = { ...normalized[0], isRoot: true };
+      normalized[0] = { ...normalized[0], isRoot: true }
     }
   }
 
-  return normalized;
-};
+  return normalized
+}
 
 interface StatusSummary {
-  success: number;
-  failed: number;
-  pending: number;
-  total: number;
+  success: number
+  failed: number
+  pending: number
+  total: number
 }
 
 export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: BrainMapProps) {
-  const [nodes, setNodes] = useState<TodoNode[]>([]);
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const nodeContainerRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragNode, setDragNode] = useState<TodoNode | null>(null);
-  const [initialClickPos, setInitialClickPos] = useState<Position>({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Position>({ x: 0, y: 0 });
-  const [lastPanPoint, setLastPanPoint] = useState<Position>({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [wasDragging, setWasDragging] = useState(false);
-  const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [nodes, setNodes] = useState<TodoNode[]>([])
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState<Position>({ x: 0, y: 0 })
+  const [lastPanPoint, setLastPanPoint] = useState<Position>({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+  const [wasDragging, setWasDragging] = useState(false)
+  const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const dragRafRef = useRef<number | null>(null)
+  const dragStateRef = useRef<{
+    nodeId: string
+    lastClient: Position
+    pendingDelta: Position
+  } | null>(null)
 
-
-  const mapNameRef = useRef(mapName);
+  const mapNameRef = useRef(mapName)
   useEffect(() => {
-    mapNameRef.current = mapName;
-  }, [mapName]);
+    mapNameRef.current = mapName
+  }, [mapName])
 
-  const getRootTitle = (overrideTitle?: string) => {
-    const trimmedOverride = overrideTitle?.trim();
+  const getRootTitle = useCallback((overrideTitle?: string) => {
+    const trimmedOverride = overrideTitle?.trim()
     if (trimmedOverride && trimmedOverride.length > 0) {
-      return trimmedOverride;
+      return trimmedOverride
     }
 
-    const rawMapName = mapNameRef.current;
+    const rawMapName = mapNameRef.current
     const candidateMapName =
-      typeof rawMapName === 'string' ? rawMapName : rawMapName != null ? String(rawMapName) : '';
-    const trimmedMapName = candidateMapName.trim();
+      typeof rawMapName === 'string' ? rawMapName : rawMapName != null ? String(rawMapName) : ''
+    const trimmedMapName = candidateMapName.trim()
     if (trimmedMapName.length > 0) {
-      return trimmedMapName;
+      return trimmedMapName
     }
 
-    return 'My Tasks';
-  };
+    return 'My Tasks'
+  }, [])
 
-  // Helper keys scoped per map
-  const nodesKey = `brainmap-${mapId}-nodes`;
-  const connectionsKey = `brainmap-${mapId}-connections`;
-
-  // Load nodes and connections from localStorage on initial render
-  useEffect(() => {
-    const savedNodes = localStorage.getItem(nodesKey);
-    const savedConnections = localStorage.getItem(connectionsKey);
-
-    if (savedNodes) {
-      try {
-        const parsedNodes = JSON.parse(savedNodes);
-        const normalized = normalizeNodes(parsedNodes);
-        if (normalized.length > 0) {
-          setNodes(normalized);
-
-          if (onRootTitleChange) {
-            const rootCandidate = normalized.find((node: TodoNode) => node.isRoot ?? isRootNode(node));
-            const normalizedRootTitle = rootCandidate?.title?.trim();
-            const normalizedMapName = mapName?.trim();
-
-            if (
-              normalizedRootTitle &&
-              (!normalizedMapName || normalizedRootTitle !== normalizedMapName)
-            ) {
-              onRootTitleChange(normalizedRootTitle);
-            }
-          }
-        } else {
-          createRootNode();
-        }
-      } catch (e) {
-        console.error('Error parsing saved nodes:', e);
-        createRootNode();
+  const createRootNode = useCallback(
+    (overrideTitle?: string) => {
+      const rootTitle = getRootTitle(overrideTitle)
+      const newNode: TodoNode = {
+        id: Date.now().toString(),
+        title: rootTitle,
+        position: { x: window.innerWidth / 2 - 60, y: window.innerHeight / 2 - 60 },
+        status: DEFAULT_STATUS,
+        isRoot: true,
       }
-    } else {
-      createRootNode();
+
+      setNodes([newNode])
+      return newNode
+    },
+    [getRootTitle],
+  )
+
+  useBrainMapStorage({
+    mapId,
+    mapName,
+    nodes,
+    connections,
+    setNodes,
+    setConnections,
+    createRootNode,
+    normalizeNodes,
+    onRootTitleChange,
+    onNodesChange,
+  })
+
+  const { connectedCountById, childrenById } = useMemo(() => {
+    const counts = new Map<string, number>()
+    const children = new Map<string, string[]>()
+
+    const addChild = (parentId: string, childId: string) => {
+      const list = children.get(parentId)
+      if (list) list.push(childId)
+      else children.set(parentId, [childId])
     }
 
-    if (savedConnections) {
-      try {
-        const parsedConnections = JSON.parse(savedConnections);
-        setConnections(parsedConnections);
-      } catch (e) {
-        console.error('Error parsing saved connections:', e);
+    for (const conn of connections) {
+      counts.set(conn.sourceId, (counts.get(conn.sourceId) ?? 0) + 1)
+      counts.set(conn.targetId, (counts.get(conn.targetId) ?? 0) + 1)
+      addChild(conn.sourceId, conn.targetId)
+    }
+
+    return { connectedCountById: counts, childrenById: children }
+  }, [connections])
+
+  const nodeById = useMemo(() => {
+    const map = new Map<string, TodoNode>()
+    for (const node of nodes) {
+      map.set(node.id, node)
+    }
+    return map
+  }, [nodes])
+
+  const leafSummaryById = useMemo(() => {
+    const memo = new Map<string, StatusSummary>()
+    const visiting = new Set<string>()
+
+    const empty = (): StatusSummary => ({ success: 0, failed: 0, pending: 0, total: 0 })
+
+    const add = (acc: StatusSummary, child: StatusSummary): StatusSummary => ({
+      success: acc.success + child.success,
+      failed: acc.failed + child.failed,
+      pending: acc.pending + child.pending,
+      total: acc.total + child.total,
+    })
+
+    const fromStatus = (status: NodeStatus | undefined): StatusSummary => {
+      if (status === 'success') return { success: 1, failed: 0, pending: 0, total: 1 }
+      if (status === 'failed') return { success: 0, failed: 1, pending: 0, total: 1 }
+      return { success: 0, failed: 0, pending: 1, total: 1 }
+    }
+
+    const compute = (nodeId: string): StatusSummary => {
+      const cached = memo.get(nodeId)
+      if (cached) return cached
+      if (visiting.has(nodeId)) return empty()
+      visiting.add(nodeId)
+
+      const children = childrenById.get(nodeId) ?? []
+      let summary: StatusSummary
+      if (children.length === 0) {
+        const node = nodeById.get(nodeId)
+        summary = fromStatus(node?.status)
+      } else {
+        summary = children.reduce((acc, childId) => add(acc, compute(childId)), empty())
       }
-    }
-  }, [mapId, onRootTitleChange]);
 
-  // Save to localStorage whenever nodes or connections change
-  useEffect(() => {
-    if (nodes.length > 0) {
-      localStorage.setItem(nodesKey, JSON.stringify(nodes));
-      // Notify parent AFTER localStorage is updated (so sidebar reads fresh data)
-      onNodesChange?.();
+      visiting.delete(nodeId)
+      memo.set(nodeId, summary)
+      return summary
     }
-    if (connections.length > 0) {
-      localStorage.setItem(connectionsKey, JSON.stringify(connections));
+
+    for (const node of nodes) {
+      compute(node.id)
     }
-  }, [nodes, connections, nodesKey, connectionsKey, onNodesChange]);
-
-  const createRootNode = (overrideTitle?: string) => {
-    const rootTitle = getRootTitle(overrideTitle);
-    const newNode: TodoNode = {
-      id: Date.now().toString(),
-      title: rootTitle,
-      position: { x: window.innerWidth / 2 - 60, y: window.innerHeight / 2 - 60 },
-      status: DEFAULT_STATUS,
-      isRoot: true,
-    };
-
-    setNodes([newNode]);
-    return newNode;
-  };
+    return memo
+  }, [nodes, nodeById, childrenById])
 
   // Add node at a specific angle from parent (free-form positioning)
   const addNodeAtAngle = (parentId: string, angle: number) => {
-    const parentNode = nodes.find(node => node.id === parentId);
-    if (!parentNode) return;
+    const parentNode = nodes.find((node) => node.id === parentId)
+    if (!parentNode) return
 
     // Get parent node size for proper offset calculation
-    const parentConnectedCount = connections.filter(
-      conn => conn.sourceId === parentId || conn.targetId === parentId
-    ).length;
-    const parentSize = getNodeSize(parentNode, parentConnectedCount);
+    const parentConnectedCount = connectedCountById.get(parentId) ?? 0
+    const parentSize = getNodeSize(parentNode, parentConnectedCount)
 
     // Calculate offset - distance from parent center to new node center
-    const newNodeSize = 145; // Default size for new nodes
-    const offset = parentSize.width / 2 + newNodeSize / 2 + 60; // Gap between nodes
+    const newNodeSize = 145 // Default size for new nodes
+    const offset = parentSize.width / 2 + newNodeSize / 2 + 60 // Gap between nodes
 
     // Calculate new position based on angle
     const newPosition: Position = {
       x: parentNode.position.x + (parentSize.width - newNodeSize) / 2 + Math.cos(angle) * offset,
-      y: parentNode.position.y + (parentSize.height - newNodeSize) / 2 + Math.sin(angle) * offset
-    };
+      y: parentNode.position.y + (parentSize.height - newNodeSize) / 2 + Math.sin(angle) * offset,
+    }
 
     const newNode: TodoNode = {
       id: Date.now().toString(),
@@ -218,42 +237,42 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
       position: newPosition,
       status: DEFAULT_STATUS,
       isRoot: false,
-    };
+    }
 
     // Create connection
     const newConnection: Connection = {
       id: `${parentNode.id}-${newNode.id}`,
       sourceId: parentNode.id,
-      targetId: newNode.id
-    };
+      targetId: newNode.id,
+    }
 
-    setNodes(prev => [...prev, newNode]);
-    setConnections(prev => [...prev, newConnection]);
+    setNodes((prev) => [...prev, newNode])
+    setConnections((prev) => [...prev, newConnection])
 
     // Start editing the new node immediately
-    setEditingNodeId(newNode.id);
-  };
+    setEditingNodeId(newNode.id)
+  }
 
   // Add node at a specific screen position (drag-to-place)
   const addNodeAtPosition = (parentId: string, screenX: number, screenY: number) => {
-    const parentNode = nodes.find(node => node.id === parentId);
-    if (!parentNode) return;
+    const parentNode = nodes.find((node) => node.id === parentId)
+    if (!parentNode) return
 
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return
 
     // Convert screen coordinates to canvas coordinates
-    const relX = screenX - rect.left;
-    const relY = screenY - rect.top;
-    const canvasX = (relX - pan.x) / zoom;
-    const canvasY = (relY - pan.y) / zoom;
+    const relX = screenX - rect.left
+    const relY = screenY - rect.top
+    const canvasX = (relX - pan.x) / zoom
+    const canvasY = (relY - pan.y) / zoom
 
     // Center the new node on the cursor position
-    const newNodeSize = 140;
+    const newNodeSize = 140
     const newPosition: Position = {
       x: canvasX - newNodeSize / 2,
-      y: canvasY - newNodeSize / 2
-    };
+      y: canvasY - newNodeSize / 2,
+    }
 
     const newNode: TodoNode = {
       id: Date.now().toString(),
@@ -261,236 +280,156 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
       position: newPosition,
       status: DEFAULT_STATUS,
       isRoot: false,
-    };
+    }
 
     // Create connection from parent to new node
     const newConnection: Connection = {
       id: `${parentNode.id}-${newNode.id}`,
       sourceId: parentNode.id,
-      targetId: newNode.id
-    };
+      targetId: newNode.id,
+    }
 
-    setNodes(prev => [...prev, newNode]);
-    setConnections(prev => [...prev, newConnection]);
+    setNodes((prev) => [...prev, newNode])
+    setConnections((prev) => [...prev, newConnection])
 
     // Start editing the new node immediately
-    setEditingNodeId(newNode.id);
-  };
+    setEditingNodeId(newNode.id)
+  }
 
   // Handle node click - no longer opens dialog, just handles selection
   const handleNodeClick = (event: React.MouseEvent, node: TodoNode) => {
-    event.preventDefault();
-    event.stopPropagation();
+    event.preventDefault()
+    event.stopPropagation()
 
     if (wasDragging) {
-      return;
+      return
     }
 
     // Don't do anything if clicking buttons or currently editing
-    const target = event.target as HTMLElement;
+    const target = event.target as HTMLElement
     if (target.closest('button') || target.closest('input') || editingNodeId === node.id) {
-      return;
+      return
     }
-  };
+  }
 
   // Start editing a node's title
   const startEditingNode = (nodeId: string) => {
-    setEditingNodeId(nodeId);
-  };
+    setEditingNodeId(nodeId)
+  }
 
-  // Handle mouse move for dragging and panning
-  const handleMouseMove = (event: React.MouseEvent) => {
-    if (isDragging && dragNode) {
-      setWasDragging(true);
+  const flushDrag = useCallback(() => {
+    const dragState = dragStateRef.current
+    if (!dragState) return
 
-      const dx = (event.clientX - initialClickPos.x) / zoom;
-      const dy = (event.clientY - initialClickPos.y) / zoom;
+    const { nodeId, pendingDelta } = dragState
+    if (pendingDelta.x === 0 && pendingDelta.y === 0) return
 
-      const nodeElement = document.querySelector(`[data-node-id="${dragNode.id}"]`);
-      if (nodeElement) {
-        (nodeElement as HTMLElement).style.transform = `translate(${dx}px, ${dy}px)`;
-      }
-
-      setNodes(prev => prev.map(node =>
-        node.id === dragNode.id
+    dragState.pendingDelta = { x: 0, y: 0 }
+    setNodes((prev) =>
+      prev.map((node) =>
+        node.id === nodeId
           ? {
               ...node,
               position: {
-                x: dragNode.position.x + dx,
-                y: dragNode.position.y + dy
-              }
+                x: node.position.x + pendingDelta.x,
+                y: node.position.y + pendingDelta.y,
+              },
             }
-          : node
-      ));
+          : node,
+      ),
+    )
+  }, [])
 
-      setInitialClickPos({ x: event.clientX, y: event.clientY });
+  // Handle mouse move for dragging and panning
+  const handleMouseMove = (event: React.MouseEvent) => {
+    if (isDragging && dragStateRef.current) {
+      setWasDragging(true)
 
-      const updatedDragNode = {
-        ...dragNode,
-        position: {
-          x: dragNode.position.x + dx,
-          y: dragNode.position.y + dy
-        }
-      };
-      setDragNode(updatedDragNode);
+      const dragState = dragStateRef.current
+      const dx = (event.clientX - dragState.lastClient.x) / zoom
+      const dy = (event.clientY - dragState.lastClient.y) / zoom
+
+      dragState.lastClient = { x: event.clientX, y: event.clientY }
+      dragState.pendingDelta = {
+        x: dragState.pendingDelta.x + dx,
+        y: dragState.pendingDelta.y + dy,
+      }
+
+      if (dragRafRef.current == null) {
+        dragRafRef.current = requestAnimationFrame(() => {
+          dragRafRef.current = null
+          flushDrag()
+        })
+      }
     }
 
     if (isPanning) {
-      const dx = event.clientX - lastPanPoint.x;
-      const dy = event.clientY - lastPanPoint.y;
+      const dx = event.clientX - lastPanPoint.x
+      const dy = event.clientY - lastPanPoint.y
 
       setPan((prevPan: Position) => ({
         x: prevPan.x + dx,
-        y: prevPan.y + dy
-      }));
+        y: prevPan.y + dy,
+      }))
 
-      setLastPanPoint({ x: event.clientX, y: event.clientY });
+      setLastPanPoint({ x: event.clientX, y: event.clientY })
     }
-  };
+  }
 
   const handleMouseDown = (event: React.MouseEvent) => {
-    const target = event.target as HTMLElement;
-    const nodeElement = target.closest('[data-component-name="NodeComponent"]');
+    const target = event.target as HTMLElement
+    const nodeElement = target.closest('[data-component-name="NodeComponent"]')
 
     if (!nodeElement && !target.closest('button') && !target.closest('input')) {
-      setIsPanning(true);
-      setLastPanPoint({ x: event.clientX, y: event.clientY });
-      event.preventDefault();
+      setIsPanning(true)
+      setLastPanPoint({ x: event.clientX, y: event.clientY })
+      event.preventDefault()
     }
-  };
+  }
 
   const handleMouseUp = () => {
     if (isDragging) {
-      setIsDragging(false);
-      setDragNode(null);
+      setIsDragging(false)
+      setDraggingNodeId(null)
+      dragStateRef.current = null
+      if (dragRafRef.current != null) {
+        cancelAnimationFrame(dragRafRef.current)
+        dragRafRef.current = null
+      }
 
       if (wasDragging) {
         if (dragTimeoutRef.current) {
-          clearTimeout(dragTimeoutRef.current);
+          clearTimeout(dragTimeoutRef.current)
         }
         dragTimeoutRef.current = setTimeout(() => {
-          setWasDragging(false);
-        }, 100);
+          setWasDragging(false)
+        }, 100)
       }
     }
 
     if (isPanning) {
-      setIsPanning(false);
+      setIsPanning(false)
     }
-  };
-
-  // Calculate node size based on title for optimal text display
-  // Returns { width, height } to properly accommodate multi-line titles
-  const getNodeSize = (node: TodoNode, connectedCount: number): { width: number; height: number } => {
-    const isRoot = isRootNode(node);
-    const title = node.title ?? '';
-    const normalizedTitle = title.trim();
-
-    // Base dimensions
-    // Button container needs: 3×44px buttons + 2×4px gaps + 2×6px padding = 152px
-    // Plus node's px-4 content padding (2×16px = 32px) = 184px minimum
-    const baseWidth = isRoot ? Math.max(200, 180 + connectedCount * 20) : 160;
-    const minWidth = isRoot ? 200 : 184;
-    const maxWidth = isRoot ? 400 : 320;
-
-    // Fixed UI element heights
-    const topPadding = 48; // pt-12 for delete button area
-    const bottomPadding = 12; // pb-3
-    const buttonAreaHeight = isRoot ? 80 : 64; // Button container + mt-2 + extra buffer
-    const titlePaddingY = 16; // Vertical padding around title
-
-    if (!normalizedTitle) {
-      const width = Math.max(minWidth, baseWidth);
-      const height = topPadding + 24 + titlePaddingY + buttonAreaHeight + bottomPadding;
-      return { width, height: Math.max(width, height) };
-    }
-
-    // Font metrics
-    const fontSize = isRoot ? 20 : 18;
-    const lineHeight = fontSize * 1.5; // More generous line height
-    const avgCharWidth = fontSize * 0.52; // Slightly narrower estimate for accuracy
-
-    const words = normalizedTitle.split(/\s+/);
-    const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
-    const totalLength = normalizedTitle.length;
-    const wordCount = words.length;
-
-    // Calculate width needed for longest word
-    const longestWordWidth = longestWord * avgCharWidth;
-    const minWidthForWord = Math.ceil(longestWordWidth / 0.75) + 48;
-
-    // Calculate target width based on text
-    let targetWidth = baseWidth;
-
-    if (wordCount <= 2 && totalLength <= 16) {
-      // Short text: fit on one line
-      const singleLineWidth = totalLength * avgCharWidth;
-      targetWidth = Math.max(baseWidth, Math.ceil(singleLineWidth / 0.75) + 48);
-    } else {
-      // Longer text: optimize for 2-3 lines with wider nodes
-      const idealCharsPerLine = 12;
-      const estimatedLines = Math.ceil(totalLength / idealCharsPerLine);
-      const charsPerLine = Math.ceil(totalLength / Math.min(estimatedLines, 3));
-      const lineWidthCalc = charsPerLine * avgCharWidth;
-      targetWidth = Math.max(baseWidth, Math.ceil(lineWidthCalc / 0.75) + 48);
-    }
-
-    // Ensure we can fit the longest word
-    targetWidth = Math.max(targetWidth, minWidthForWord);
-
-    // Clamp width
-    const finalWidth = Math.max(minWidth, Math.min(maxWidth, targetWidth));
-
-    // WORD-BASED line counting for accurate height
-    // Simulate text wrapping by word boundaries
-    const textAreaWidth = finalWidth * 0.75; // Account for padding
-    let lineCount = 1;
-    let currentLineWidth = 0;
-    const spaceWidth = avgCharWidth;
-
-    for (const word of words) {
-      const wordWidth = word.length * avgCharWidth;
-
-      if (currentLineWidth === 0) {
-        // First word on line
-        currentLineWidth = wordWidth;
-      } else if (currentLineWidth + spaceWidth + wordWidth <= textAreaWidth) {
-        // Word fits on current line
-        currentLineWidth += spaceWidth + wordWidth;
-      } else {
-        // Word needs new line
-        lineCount++;
-        currentLineWidth = wordWidth;
-      }
-    }
-
-    // Calculate title height with word-based line count
-    const titleHeight = lineCount * lineHeight;
-
-    // Calculate total height needed with generous buffer
-    const totalHeight = topPadding + titleHeight + titlePaddingY + buttonAreaHeight + bottomPadding;
-
-    // Ensure minimum height
-    const minHeight = isRoot ? 160 : 150;
-    const finalHeight = Math.max(minHeight, Math.ceil(totalHeight) + 8); // +8 safety buffer
-
-    return { width: finalWidth, height: finalHeight };
-  };
+  }
 
   const handleStartDrag = (node: TodoNode, event: React.MouseEvent) => {
-    event.stopPropagation();
-    setWasDragging(false);
-    setDragNode(node);
-    setInitialClickPos({ x: event.clientX, y: event.clientY });
-    setIsDragging(true);
-  };
+    event.stopPropagation()
+    setWasDragging(false)
+    setIsDragging(true)
+    setDraggingNodeId(node.id)
+    dragStateRef.current = {
+      nodeId: node.id,
+      lastClient: { x: event.clientX, y: event.clientY },
+      pendingDelta: { x: 0, y: 0 },
+    }
+  }
 
   const handleCanvasMouseDown = (event: React.MouseEvent) => {
-    handleMouseDown(event);
-  };
+    handleMouseDown(event)
+  }
 
   const handleCanvasClick = (event: React.MouseEvent) => {
-    const target = event.target as HTMLElement;
+    const target = event.target as HTMLElement
     if (
       target.closest('[data-component-name="NodeComponent"]') ||
       target.closest('button') ||
@@ -498,179 +437,136 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
       target.tagName.toLowerCase() === 'input' ||
       target.tagName.toLowerCase() === 'form'
     ) {
-      return;
+      return
     }
 
     // Click on empty canvas clears editing mode
     if (editingNodeId) {
-      setEditingNodeId(null);
+      setEditingNodeId(null)
     }
-  };
+  }
 
   const handleWheel = (event: React.WheelEvent) => {
-    event.preventDefault();
+    event.preventDefault()
 
     // Smooth zoom: proportional to scroll amount with damping
-    const scrollDelta = event.deltaY;
-    const zoomSensitivity = 0.001; // Lower = smoother
-    const dampingFactor = 0.5; // Reduces large jumps
+    const scrollDelta = event.deltaY
+    const zoomSensitivity = 0.001 // Lower = smoother
+    const dampingFactor = 0.5 // Reduces large jumps
 
     // Calculate proportional zoom change (negative deltaY = zoom in)
-    let zoomChange = -scrollDelta * zoomSensitivity * zoom * dampingFactor;
+    let zoomChange = -scrollDelta * zoomSensitivity * zoom * dampingFactor
 
     // Clamp the zoom change to prevent huge jumps
-    zoomChange = Math.max(-0.15, Math.min(0.15, zoomChange));
+    zoomChange = Math.max(-0.15, Math.min(0.15, zoomChange))
 
-    const newZoom = Math.max(0.1, Math.min(3, zoom + zoomChange));
+    const newZoom = Math.max(0.1, Math.min(3, zoom + zoomChange))
 
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return
 
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
+    const mouseX = event.clientX - rect.left
+    const mouseY = event.clientY - rect.top
 
-    const scaleChange = newZoom / zoom;
+    const scaleChange = newZoom / zoom
 
-    const newPanX = (mouseX - pan.x) * (1 - scaleChange) + pan.x;
-    const newPanY = (mouseY - pan.y) * (1 - scaleChange) + pan.y;
+    const newPanX = (mouseX - pan.x) * (1 - scaleChange) + pan.x
+    const newPanY = (mouseY - pan.y) * (1 - scaleChange) + pan.y
 
-    setPan({ x: newPanX, y: newPanY });
-    setZoom(newZoom);
-  };
-
+    setPan({ x: newPanX, y: newPanY })
+    setZoom(newZoom)
+  }
 
   const zoomIn = () => {
-    setZoom(prev => Math.min(3, prev + 0.1));
-  };
+    setZoom((prev) => Math.min(3, prev + 0.1))
+  }
 
   const zoomOut = () => {
-    setZoom(prev => Math.max(0.1, prev - 0.1));
-  };
+    setZoom((prev) => Math.max(0.1, prev - 0.1))
+  }
 
   const resetView = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  };
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }
 
   const updateNodeTitle = (nodeId: string, newTitle: string) => {
-    const trimmedTitle = newTitle.trim();
-    let rootRenamed = false;
-    let mappedRootTitle: string | null = null;
+    const trimmedTitle = newTitle.trim()
+    let rootRenamed = false
+    let mappedRootTitle: string | null = null
 
-    setNodes(prev =>
-      prev.map(node => {
-        if (node.id !== nodeId) {
-          return node;
+    setNodes((prev) =>
+      prev.map((node) => {
+        if (node.id !== nodeId) return node
+
+        const root = isRootNode(node)
+        if (root) {
+          rootRenamed = true
+          const nextTitle = trimmedTitle.length > 0 ? trimmedTitle : getRootTitle()
+          mappedRootTitle = nextTitle
+          return { ...node, title: nextTitle, isRoot: true }
         }
 
-        const isRoot = node.isRoot ?? isRootNode(node);
-
-        if (isRoot) {
-          rootRenamed = true;
-          const nextTitle = trimmedTitle.length > 0 ? trimmedTitle : getRootTitle();
-          mappedRootTitle = nextTitle;
-          return { ...node, title: nextTitle, isRoot: true };
+        return {
+          ...node,
+          title: trimmedTitle.length > 0 ? trimmedTitle : 'Untitled',
+          isRoot: false,
         }
-
-        return { ...node, title: trimmedTitle.length > 0 ? trimmedTitle : 'Untitled', isRoot };
-      })
-    );
+      }),
+    )
 
     if (rootRenamed && mappedRootTitle && onRootTitleChange) {
-      onRootTitleChange(mappedRootTitle);
+      onRootTitleChange(mappedRootTitle)
     }
-  };
+  }
 
   const updateNodeStatus = (nodeId: string, status: NodeStatus) => {
-    setNodes(prev =>
-      prev.map(node =>
-        node.id === nodeId
-          ? { ...node, status, isRoot: node.isRoot ?? isRootNode(node) }
-          : node
-      )
-    );
-  };
+    setNodes((prev) =>
+      prev.map((node) =>
+        node.id === nodeId ? { ...node, status, isRoot: isRootNode(node) } : node,
+      ),
+    )
+  }
 
   const deleteNode = (nodeId: string) => {
-    setNodes(prev => prev.filter(node => node.id !== nodeId));
-    setConnections(prev =>
-      prev.filter(conn => conn.sourceId !== nodeId && conn.targetId !== nodeId)
-    );
-    setEditingNodeId(null);
-  };
+    setNodes((prev) => prev.filter((node) => node.id !== nodeId))
+    setConnections((prev) =>
+      prev.filter((conn) => conn.sourceId !== nodeId && conn.targetId !== nodeId),
+    )
+    setEditingNodeId(null)
+  }
 
   const resetBrainMap = () => {
-    const rootTitle = getRootTitle();
+    const rootTitle = getRootTitle()
     const rootNode: TodoNode = {
       id: Date.now().toString(),
       title: rootTitle,
       position: {
         x: window.innerWidth / 2 - 60,
-        y: window.innerHeight / 2 - 60
+        y: window.innerHeight / 2 - 60,
       },
       status: DEFAULT_STATUS,
       isRoot: true,
-    };
-
-    setConnections([]);
-    setEditingNodeId(null);
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-    setNodes([rootNode]);
-
-    localStorage.removeItem(nodesKey);
-    localStorage.removeItem(connectionsKey);
-    localStorage.setItem(nodesKey, JSON.stringify([rootNode]));
-    localStorage.setItem(connectionsKey, JSON.stringify([]));
-
-    if (onRootTitleChange) {
-      onRootTitleChange(rootTitle);
-    }
-  };
-
-  const calculateStatusSummary = (nodeId: string, visited = new Set<string>()): StatusSummary => {
-    if (visited.has(nodeId)) {
-      return { success: 0, failed: 0, pending: 0, total: 0 };
     }
 
-    visited.add(nodeId);
+    setConnections([])
+    setEditingNodeId(null)
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+    setNodes([rootNode])
 
-    const currentNode = nodes.find((n) => n.id === nodeId);
-    if (!currentNode) {
-      return { success: 0, failed: 0, pending: 0, total: 0 };
-    }
-
-    const summary: StatusSummary = { success: 0, failed: 0, pending: 0, total: 0 };
-
-    summary.total += 1;
-    if (currentNode.status === 'success') {
-      summary.success += 1;
-    } else if (currentNode.status === 'failed') {
-      summary.failed += 1;
-    } else {
-      summary.pending += 1;
-    }
-
-    const directConnections = connections
-      .filter((conn) => conn.sourceId === nodeId || conn.targetId === nodeId)
-      .map((conn) => (conn.sourceId === nodeId ? conn.targetId : conn.sourceId));
-
-    for (const connectedNodeId of directConnections) {
-      if (!visited.has(connectedNodeId)) {
-        const childSummary = calculateStatusSummary(connectedNodeId, visited);
-        summary.success += childSummary.success;
-        summary.failed += childSummary.failed;
-        summary.pending += childSummary.pending;
-        summary.total += childSummary.total;
-      }
-    }
-
-    return summary;
-  };
+    onRootTitleChange?.(rootTitle)
+  }
 
   // Render connections as SVG lines
+  const getEllipseEdge = (w: number, h: number, angle: number) => {
+    const a = w / 2 - 2
+    const b = h / 2 - 2
+    return (a * b) / Math.sqrt(Math.pow(b * Math.cos(angle), 2) + Math.pow(a * Math.sin(angle), 2))
+  }
+
   const renderConnections = () => {
-    if (connections.length === 0) return null;
+    if (connections.length === 0) return null
 
     return (
       <svg
@@ -679,55 +575,43 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
           width: '100%',
           height: '100%',
           overflow: 'visible',
-          zIndex: 1
+          zIndex: 1,
         }}
       >
-        {connections.map(conn => {
-          const sourceNode = nodes.find(node => node.id === conn.sourceId);
-          const targetNode = nodes.find(node => node.id === conn.targetId);
+        {connections.map((conn) => {
+          const sourceNode = nodes.find((node) => node.id === conn.sourceId)
+          const targetNode = nodes.find((node) => node.id === conn.targetId)
 
-          if (!sourceNode || !targetNode) return null;
+          if (!sourceNode || !targetNode) return null
 
-          const sourceConnectedCount = connections.filter(
-            connection => connection.sourceId === sourceNode.id || connection.targetId === sourceNode.id
-          ).length;
+          const sourceConnectedCount = connectedCountById.get(sourceNode.id) ?? 0
+          const targetConnectedCount = connectedCountById.get(targetNode.id) ?? 0
 
-          const targetConnectedCount = connections.filter(
-            connection => connection.sourceId === targetNode.id || connection.targetId === targetNode.id
-          ).length;
-
-          const sourceSize = getNodeSize(sourceNode, sourceConnectedCount);
-          const targetSize = getNodeSize(targetNode, targetConnectedCount);
+          const sourceSize = getNodeSize(sourceNode, sourceConnectedCount)
+          const targetSize = getNodeSize(targetNode, targetConnectedCount)
 
           // Calculate centers based on width/height
-          const startX = sourceNode.position.x + (sourceSize.width / 2);
-          const startY = sourceNode.position.y + (sourceSize.height / 2);
-          const endX = targetNode.position.x + (targetSize.width / 2);
-          const endY = targetNode.position.y + (targetSize.height / 2);
+          const startX = sourceNode.position.x + sourceSize.width / 2
+          const startY = sourceNode.position.y + sourceSize.height / 2
+          const endX = targetNode.position.x + targetSize.width / 2
+          const endY = targetNode.position.y + targetSize.height / 2
 
-          const dx = endX - startX;
-          const dy = endY - startY;
-          const distance = Math.sqrt(dx * dx + dy * dy);
+          const dx = endX - startX
+          const dy = endY - startY
+          const distance = Math.sqrt(dx * dx + dy * dy)
+          if (distance === 0) return null
 
           // Use elliptical edge calculation for non-square nodes
-          const sourceAngle = Math.atan2(dy, dx);
-          const targetAngle = Math.atan2(-dy, -dx);
+          const sourceAngle = Math.atan2(dy, dx)
+          const targetAngle = Math.atan2(-dy, -dx)
 
-          // Calculate edge point on ellipse
-          const getEllipseEdge = (w: number, h: number, angle: number) => {
-            const a = w / 2 - 2;
-            const b = h / 2 - 2;
-            const r = (a * b) / Math.sqrt(Math.pow(b * Math.cos(angle), 2) + Math.pow(a * Math.sin(angle), 2));
-            return r;
-          };
+          const sourceRadius = getEllipseEdge(sourceSize.width, sourceSize.height, sourceAngle)
+          const targetRadius = getEllipseEdge(targetSize.width, targetSize.height, targetAngle)
 
-          const sourceRadius = getEllipseEdge(sourceSize.width, sourceSize.height, sourceAngle);
-          const targetRadius = getEllipseEdge(targetSize.width, targetSize.height, targetAngle);
-
-          const startPointX = startX + (dx / distance) * sourceRadius;
-          const startPointY = startY + (dy / distance) * sourceRadius;
-          const endPointX = endX - (dx / distance) * targetRadius;
-          const endPointY = endY - (dy / distance) * targetRadius;
+          const startPointX = startX + (dx / distance) * sourceRadius
+          const startPointY = startY + (dy / distance) * sourceRadius
+          const endPointX = endX - (dx / distance) * targetRadius
+          const endPointY = endY - (dy / distance) * targetRadius
 
           return (
             <line
@@ -740,57 +624,61 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
               strokeWidth={3}
               strokeLinecap="round"
               style={{
-                filter: 'drop-shadow(0 2px 4px rgba(96, 165, 250, 0.3))'
+                filter: 'drop-shadow(0 2px 4px rgba(96, 165, 250, 0.3))',
               }}
             />
-          );
+          )
         })}
       </svg>
-    );
-  };
+    )
+  }
 
   // Render each node with its NodeComponent
   const renderNodes = () => {
-    return nodes.map(node => {
-      const connectedNodesCount = connections.filter(
-        conn => conn.sourceId === node.id || conn.targetId === node.id
-      ).length;
-
-      const statusSummary = isRootNode(node) ? calculateStatusSummary(node.id) : undefined;
-      const nodeSize = getNodeSize(node, connectedNodesCount);
+    return nodes.map((node) => {
+      const connectedNodesCount = connectedCountById.get(node.id) ?? 0
+      const hasChildren = (childrenById.get(node.id)?.length ?? 0) > 0
+      const statusSummary = (isRootNode(node) || hasChildren) ? leafSummaryById.get(node.id) : undefined
+      const nodeSize = getNodeSize(node, connectedNodesCount)
 
       return (
         <NodeComponent
           key={node.id}
           node={node}
           isConnecting={false}
-          isDragging={isDragging && dragNode?.id === node.id}
+          isDragging={isDragging && draggingNodeId === node.id}
           isEditing={editingNodeId === node.id}
           connectedNodesCount={connectedNodesCount}
           statusSummary={statusSummary}
+          hasChildren={hasChildren}
           nodeWidth={nodeSize.width}
           nodeHeight={nodeSize.height}
           onClick={(e) => handleNodeClick(e, node)}
           onStartDrag={(node: TodoNode, event: React.MouseEvent) => handleStartDrag(node, event)}
           onStatusChange={(status: NodeStatus) => updateNodeStatus(node.id, status)}
           onAddNodeAtAngle={(angle: number) => addNodeAtAngle(node.id, angle)}
-          onAddNodeAtPosition={(screenX: number, screenY: number) => addNodeAtPosition(node.id, screenX, screenY)}
+          onAddNodeAtPosition={(screenX: number, screenY: number) =>
+            addNodeAtPosition(node.id, screenX, screenY)
+          }
           onTitleChange={(title: string) => updateNodeTitle(node.id, title)}
           onStartEditing={() => startEditingNode(node.id)}
           onFinishEditing={() => setEditingNodeId(null)}
           onDeleteNode={() => deleteNode(node.id)}
         />
-      );
-    });
-  };
+      )
+    })
+  }
 
   useEffect(() => {
     return () => {
       if (dragTimeoutRef.current) {
-        clearTimeout(dragTimeoutRef.current);
+        clearTimeout(dragTimeoutRef.current)
       }
-    };
-  }, []);
+      if (dragRafRef.current != null) {
+        cancelAnimationFrame(dragRafRef.current)
+      }
+    }
+  }, [])
 
   return (
     <div
@@ -868,7 +756,6 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
 
       {/* Node container with transform */}
       <div
-        ref={nodeContainerRef}
         className="absolute inset-0"
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
@@ -887,7 +774,6 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
           {renderNodes()}
         </div>
       </div>
-
     </div>
-  );
+  )
 }

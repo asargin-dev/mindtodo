@@ -1,16 +1,22 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
-import { TodoNode, NodeStatus } from '../types';
-import { CheckCircle2, XCircle, Clock3, Sparkles } from 'lucide-react';
+import type React from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { NodeStatus, TodoNode } from '@/types'
+import { CheckCircle2, XCircle, Clock3, Sparkles } from 'lucide-react'
+import { isRootNode } from '@/lib/rootNode'
+import { getNodeSize } from '@/lib/nodeSizing'
 
-const STATUS_STYLES: Record<NodeStatus, {
-  backgroundClass: string;
-  borderClass: string;
-  hoverGlow: string;
-  label: string;
-  labelClass: string;
-  iconClass: string;
-}> = {
+const STATUS_STYLES: Record<
+  NodeStatus,
+  {
+    backgroundClass: string
+    borderClass: string
+    hoverGlow: string
+    label: string
+    labelClass: string
+    iconClass: string
+  }
+> = {
   success: {
     backgroundClass: 'bg-gradient-to-br from-emerald-500/20 via-green-600/30 to-teal-700/20',
     borderClass: 'border-emerald-500/50',
@@ -34,40 +40,76 @@ const STATUS_STYLES: Record<NodeStatus, {
     label: 'Bekliyor',
     labelClass: 'text-slate-400',
     iconClass: 'text-slate-400',
-  }
-};
-
-// Custom plus cursor as SVG data URL - normal state (blue)
-const PLUS_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10' fill='%233b82f6' fill-opacity='0.3'/%3E%3Cline x1='12' y1='8' x2='12' y2='16'/%3E%3Cline x1='8' y1='12' x2='16' y2='12'/%3E%3C/svg%3E") 12 12, crosshair`;
-
-// Darker plus cursor for active drag state (deeper blue/indigo)
-const PLUS_CURSOR_ACTIVE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28' fill='none' stroke='%234f46e5' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='14' cy='14' r='12' fill='%234338ca' fill-opacity='0.5'/%3E%3Cline x1='14' y1='8' x2='14' y2='20'/%3E%3Cline x1='8' y1='14' x2='20' y2='14'/%3E%3C/svg%3E") 14 14, crosshair`;
-
-interface StatusSummary {
-  success: number;
-  failed: number;
-  pending: number;
-  total: number;
+  },
 }
 
+// Custom plus cursor as SVG data URL - normal state (blue)
+const PLUS_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2360a5fa' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10' fill='%233b82f6' fill-opacity='0.3'/%3E%3Cline x1='12' y1='8' x2='12' y2='16'/%3E%3Cline x1='8' y1='12' x2='16' y2='12'/%3E%3C/svg%3E") 12 12, crosshair`
+
+// Darker plus cursor for active drag state (deeper blue/indigo)
+const PLUS_CURSOR_ACTIVE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28' fill='none' stroke='%234f46e5' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='14' cy='14' r='12' fill='%234338ca' fill-opacity='0.5'/%3E%3Cline x1='14' y1='8' x2='14' y2='20'/%3E%3Cline x1='8' y1='14' x2='20' y2='14'/%3E%3C/svg%3E") 14 14, crosshair`
+
+interface StatusSummary {
+  success: number
+  failed: number
+  pending: number
+  total: number
+}
+
+type ConfettiShape = 'circle' | 'square' | 'triangle' | 'star'
+
+interface ConfettiParticle {
+  id: number
+  type: ConfettiShape
+  color: string
+  x: number
+  y: number
+  vx: number
+  vy: number
+  rotation: number
+  rotationSpeed: number
+  size: number
+  gravity: number
+  life: number
+}
+
+const CONFETTI_COLORS = [
+  '#FFD700',
+  '#FF6B6B',
+  '#4ECDC4',
+  '#45B7D1',
+  '#96CEB4',
+  '#FECA57',
+  '#FF9FF3',
+  '#54A0FF',
+  '#5F27CD',
+  '#00D2D3',
+  '#FF9F43',
+  '#10AC84',
+  '#EE5A24',
+  '#0984E3',
+  '#A29BFE',
+]
+
 interface NodeComponentProps {
-  node: TodoNode;
-  isConnecting: boolean;
-  isDragging: boolean;
-  isEditing: boolean;
-  connectedNodesCount: number;
-  statusSummary?: StatusSummary;
-  nodeWidth: number;
-  nodeHeight: number;
-  onClick: (e: React.MouseEvent) => void;
-  onStartDrag: (node: TodoNode, event: React.MouseEvent) => void;
-  onStatusChange: (status: NodeStatus) => void;
-  onAddNodeAtAngle: (angle: number) => void;
-  onAddNodeAtPosition: (screenX: number, screenY: number) => void;
-  onTitleChange: (title: string) => void;
-  onStartEditing: () => void;
-  onFinishEditing: () => void;
-  onDeleteNode: () => void;
+  node: TodoNode
+  isConnecting: boolean
+  isDragging: boolean
+  isEditing: boolean
+  connectedNodesCount: number
+  statusSummary?: StatusSummary
+  hasChildren?: boolean
+  nodeWidth: number
+  nodeHeight: number
+  onClick: (e: React.MouseEvent) => void
+  onStartDrag: (node: TodoNode, event: React.MouseEvent) => void
+  onStatusChange: (status: NodeStatus) => void
+  onAddNodeAtAngle: (angle: number) => void
+  onAddNodeAtPosition: (screenX: number, screenY: number) => void
+  onTitleChange: (title: string) => void
+  onStartEditing: () => void
+  onFinishEditing: () => void
+  onDeleteNode: () => void
 }
 
 export function NodeComponent({
@@ -77,6 +119,7 @@ export function NodeComponent({
   isEditing,
   connectedNodesCount,
   statusSummary,
+  hasChildren = false,
   nodeWidth,
   nodeHeight,
   onClick,
@@ -89,50 +132,80 @@ export function NodeComponent({
   onFinishEditing,
   onDeleteNode
 }: NodeComponentProps) {
-  const isRootNode =
-    typeof node.isRoot === 'boolean'
-      ? node.isRoot
-      : node.id === 'root' || node.title === 'My Tasks' || node.title === 'Work' || node.title === 'Personal';
+  const root = isRootNode(node)
 
-  const [showConfetti, setShowConfetti] = useState(false);
-  const [confettiParticles, setConfettiParticles] = useState<Array<{
-    id: number;
-    type: 'circle' | 'square' | 'triangle' | 'star';
-    color: string;
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    rotation: number;
-    rotationSpeed: number;
-    size: number;
-    gravity: number;
-    life: number;
-  }>>([]);
+  const [showConfetti, setShowConfetti] = useState(false)
+  const [confettiParticles, setConfettiParticles] = useState<ConfettiParticle[]>([])
 
   // Hover states
-  const [isHovering, setIsHovering] = useState(false);
-  const [isNearEdge, setIsNearEdge] = useState(false);
+  const [isHovering, setIsHovering] = useState(false)
+  const [isNearEdge, setIsNearEdge] = useState(false)
   // Drag-to-place state
-  const [isDraggingNewNode, setIsDraggingNewNode] = useState(false);
-  const [dragStartPosition, setDragStartPosition] = useState<{ x: number; y: number } | null>(null);
-  const [dragPreviewPosition, setDragPreviewPosition] = useState<{ x: number; y: number } | null>(null);
+  const [isDraggingNewNode, setIsDraggingNewNode] = useState(false)
+  const [dragStartPosition, setDragStartPosition] = useState<{ x: number; y: number } | null>(null)
+  const [dragPreviewPosition, setDragPreviewPosition] = useState<{ x: number; y: number } | null>(
+    null,
+  )
   // Refs for values needed in effect without causing re-runs
-  const currentAngleRef = useRef(0);
-  const dragStartPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const currentAngleRef = useRef(0)
+  const dragStartPositionRef = useRef<{ x: number; y: number } | null>(null)
 
-  const [localTitle, setLocalTitle] = useState(node.title);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const nodeRef = useRef<HTMLDivElement>(null);
+  const [localTitle, setLocalTitle] = useState(node.title)
+  const titleEditorRef = useRef<HTMLTextAreaElement>(null)
+  const nodeRef = useRef<HTMLDivElement>(null)
 
-  const summary = statusSummary ?? { success: 0, failed: 0, pending: 0, total: 0 };
-  const nodeStatus: NodeStatus = node.status ?? 'pending';
-  const statusStyle = STATUS_STYLES[nodeStatus];
+  const summary = statusSummary ?? { success: 0, failed: 0, pending: 0, total: 0 }
+  const nodeStatus: NodeStatus = node.status ?? 'pending'
+
+  const derivedStatus: NodeStatus = useCallback(() => {
+    if (!hasChildren || summary.total === 0) return nodeStatus
+    if (summary.success === summary.total) return 'success'
+    if (summary.failed === summary.total) return 'failed'
+    if (summary.pending === summary.total) return 'pending'
+    return 'pending'
+  }, [hasChildren, nodeStatus, summary.failed, summary.pending, summary.success, summary.total])()
+
+  const dominantStatus: NodeStatus = useMemo(() => {
+    if (!hasChildren || summary.total === 0) return nodeStatus
+    const entries: Array<[NodeStatus, number]> = [
+      ['success', summary.success],
+      ['failed', summary.failed],
+      ['pending', summary.pending],
+    ]
+    entries.sort((a, b) => b[1] - a[1])
+    return entries[0][0]
+  }, [hasChildren, nodeStatus, summary.failed, summary.pending, summary.success, summary.total])
+
+  const statusStyle = STATUS_STYLES[dominantStatus]
+
+  const derivedBackground = useMemo(() => {
+    if (!hasChildren || summary.total === 0) return null
+    const total = summary.total
+    const parts: Array<[string, number]> = [
+      ['rgba(16, 185, 129, 0.22)', summary.success],
+      ['rgba(244, 63, 94, 0.22)', summary.failed],
+      ['rgba(59, 130, 246, 0.18)', summary.pending],
+    ].filter(([, count]) => count > 0)
+    if (parts.length <= 1) return null
+
+    let acc = 0
+    const stops = parts.map(([color, count]) => {
+      const start = (acc / total) * 100
+      acc += count
+      const end = (acc / total) * 100
+      return `${color} ${start.toFixed(2)}% ${end.toFixed(2)}%`
+    })
+
+    return [
+      `radial-gradient(circle at 30% 30%, rgba(255,255,255,0.10) 0%, transparent 60%)`,
+      `conic-gradient(from 180deg at 50% 50%, ${stops.join(', ')})`,
+    ].join(', ')
+  }, [hasChildren, summary.failed, summary.pending, summary.success, summary.total])
 
   // Calculate dynamic size based on title for optimal text display
   // Returns { width, height } to properly handle multi-line titles
   const calculateDynamicSize = (title: string): { width: number; height: number } => {
-    const normalizedTitle = title.trim();
+    const normalizedTitle = title.trim()
 
     // Base dimensions
     // Button container needs: 3×44px buttons + 2×4px gaps + 2×6px padding = 152px
@@ -158,7 +231,7 @@ export function NodeComponent({
     const lineHeight = fontSize * 1.5;
     const avgCharWidth = fontSize * 0.52;
 
-    const words = normalizedTitle.split(/\s+/);
+    const words = normalizedTitle.split(/\s+/)
     const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
     const totalLength = normalizedTitle.length;
     const wordCount = words.length;
@@ -213,29 +286,34 @@ export function NodeComponent({
     return { width: finalWidth, height: finalHeight };
   };
 
-  // Use dynamic size when editing, otherwise use prop dimensions
-  const dynamicSize = isEditing ? calculateDynamicSize(localTitle) : null;
-  const baseWidth = dynamicSize ? dynamicSize.width : nodeWidth;
-  const baseHeight = dynamicSize ? dynamicSize.height : nodeHeight;
+  const baseSize = isEditing
+    ? getNodeSize(node, connectedNodesCount, localTitle)
+    : { width: nodeWidth, height: nodeHeight }
+  const baseWidth = baseSize.width
+  const baseHeight = baseSize.height
 
-  const summaryWithoutSelf = isRootNode
-    ? {
-        success: Math.max(summary.success - (nodeStatus === 'success' ? 1 : 0), 0),
-        failed: Math.max(summary.failed - (nodeStatus === 'failed' ? 1 : 0), 0),
-        pending: Math.max(summary.pending - (nodeStatus === 'pending' ? 1 : 0), 0),
-        total: Math.max(summary.total - 1, 0),
-      }
-    : summary;
+  const shouldCelebrate = !root && !hasChildren && derivedStatus === 'success'
 
-  const shouldCelebrate = !isRootNode && nodeStatus === 'success';
+  const syncTitleEditorHeight = useCallback(() => {
+    const el = titleEditorRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [])
 
-  // Focus input when editing starts
+  // Focus editor when editing starts
   useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+    if (isEditing && titleEditorRef.current) {
+      titleEditorRef.current.focus()
+      titleEditorRef.current.select()
+      syncTitleEditorHeight()
     }
-  }, [isEditing]);
+  }, [isEditing, syncTitleEditorHeight])
+
+  useEffect(() => {
+    if (!isEditing) return
+    syncTitleEditorHeight()
+  }, [isEditing, localTitle, syncTitleEditorHeight])
 
   // Update local title when node title changes
   useEffect(() => {
@@ -475,26 +553,27 @@ export function NodeComponent({
   }, [checkEdgeProximity]);
 
   const handleStatusClick = (e: React.MouseEvent, status: NodeStatus) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onStatusChange(status);
-  };
+    e.preventDefault()
+    e.stopPropagation()
+    if (hasChildren) return
+    onStatusChange(status)
+  }
 
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      e.preventDefault();
-      onTitleChange(localTitle);
-      onFinishEditing();
+      e.preventDefault()
+      onTitleChange(localTitle)
+      onFinishEditing()
     } else if (e.key === 'Escape') {
-      setLocalTitle(node.title);
-      onFinishEditing();
+      setLocalTitle(node.title)
+      onFinishEditing()
     }
-  };
+  }
 
   const handleTitleBlur = () => {
-    onTitleChange(localTitle);
-    onFinishEditing();
-  };
+    onTitleChange(localTitle)
+    onFinishEditing()
+  }
 
   const handleTitleClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -513,7 +592,7 @@ export function NodeComponent({
 
 
   // Render confetti particle
-  const renderParticle = (particle: typeof confettiParticles[0]) => {
+  const renderParticle = (particle: ConfettiParticle) => {
     const opacity = Math.max(0, particle.life);
 
     if (particle.type === 'circle') {
@@ -787,27 +866,35 @@ export function NodeComponent({
       {/* Main node container */}
       <div
         className={`absolute inset-0 rounded-3xl overflow-hidden backdrop-blur-xl border cursor-pointer z-20 transition-shadow duration-200 ${
-          isRootNode
+          root
             ? 'bg-gradient-to-br from-blue-600/30 via-purple-600/20 to-slate-800/40 border-blue-500/30'
             : `${statusStyle.backgroundClass} ${statusStyle.borderClass}`
         }`}
         style={{
+          background: !root && derivedBackground ? derivedBackground : undefined,
+          borderColor: !root && derivedBackground
+            ? dominantStatus === 'success'
+              ? 'rgba(16, 185, 129, 0.45)'
+              : dominantStatus === 'failed'
+                ? 'rgba(244, 63, 94, 0.45)'
+                : 'rgba(59, 130, 246, 0.4)'
+            : undefined,
           boxShadow: isEditing
             ? '0 0 0 2px rgba(59, 130, 246, 0.5), 0 25px 50px -12px rgba(0, 0, 0, 0.5)'
             : isHovering
-            ? isRootNode
+            ? root
               ? '0 0 25px rgba(96, 165, 250, 0.5), 0 0 50px rgba(139, 92, 246, 0.3), 0 0 80px rgba(96, 165, 250, 0.15)'
               : statusStyle.hoverGlow
             : 'none'
         }}
         onMouseDown={(e) => {
           if (!isEditing) {
-            onStartDrag(node, e);
+            onStartDrag(node, e)
           }
         }}
       >
         {/* Decorative inner glow for root node */}
-        {isRootNode && (
+        {root && (
           <>
             <div className="absolute inset-0 bg-gradient-to-br from-blue-400/10 via-transparent to-purple-500/10" />
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-px bg-gradient-to-r from-transparent via-blue-400/50 to-transparent" />
@@ -815,7 +902,7 @@ export function NodeComponent({
         )}
 
         {/* Delete button for non-root nodes - refined floating style */}
-        {!isRootNode && (
+        {!root && (
           <button
             onClick={handleDeleteClick}
             className="group absolute top-2 right-2 z-30 w-8 h-8 rounded-full transition-all duration-300 touch-manipulation flex items-center justify-center overflow-hidden hover:scale-110 active:scale-95"
@@ -851,16 +938,16 @@ export function NodeComponent({
           <div className="flex-1 flex items-center justify-center w-full">
             {/* Title - editable when isEditing, clickable otherwise */}
             {isEditing ? (
-              <input
-                ref={inputRef}
-                type="text"
+              <textarea
+                ref={titleEditorRef}
                 value={localTitle}
                 onChange={(e) => setLocalTitle(e.target.value)}
                 onKeyDown={handleTitleKeyDown}
                 onBlur={handleTitleBlur}
+                rows={1}
                 className="bg-transparent border-none px-3 py-2 text-lg text-white
                   text-center font-semibold focus:outline-none focus:ring-0
-                  w-[80%] caret-blue-400"
+                  w-[75%] caret-blue-400 resize-none overflow-hidden leading-snug"
                 placeholder=""
                 onClick={(e) => e.stopPropagation()}
               />
@@ -869,10 +956,10 @@ export function NodeComponent({
                 onClick={handleTitleClick}
                 className={`font-semibold text-center leading-snug cursor-text
                   hover:opacity-80 transition-opacity ${
-                  isRootNode
-                    ? 'text-xl bg-gradient-to-r from-blue-200 via-purple-200 to-blue-200 bg-clip-text text-transparent max-w-[85%]'
-                    : 'text-lg text-white/90 max-w-[80%]'
-                }`}
+                    root
+                      ? 'text-xl bg-gradient-to-r from-blue-200 via-purple-200 to-blue-200 bg-clip-text text-transparent max-w-[85%]'
+                      : 'text-lg text-white/90 max-w-[80%]'
+                  }`}
                 style={{
                   wordBreak: 'normal',
                   overflowWrap: 'break-word',
@@ -888,7 +975,7 @@ export function NodeComponent({
           </div>
 
           {/* Status buttons for non-root nodes OR root info - fixed at bottom */}
-          {!isRootNode ? (
+          {!root && !hasChildren ? (
             <div className="flex items-center gap-1 mt-2 flex-shrink-0 p-1.5 rounded-2xl bg-black/20 backdrop-blur-sm border border-white/5">
               {/* Success button - glass orb style */}
               <button
@@ -1010,6 +1097,36 @@ export function NodeComponent({
                 }`} />
               </button>
             </div>
+          ) : hasChildren ? (
+            <div className="flex flex-col items-center gap-2 mt-2 flex-shrink-0">
+              <div
+                className="flex items-center gap-2 px-4 py-1.5 rounded-full"
+                style={{
+                  background:
+                    'linear-gradient(145deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)',
+                  boxShadow:
+                    'inset 0 1px 1px rgba(255,255,255,0.15), inset 0 -1px 2px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.15)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <span className="text-xs font-medium text-slate-200">
+                  {summary.total > 0 ? `${summary.total} alt görev` : 'Alt görev ekleyin'}
+                </span>
+              </div>
+              {summary.total > 0 && (
+                <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(0,0,0,0.15)' }}>
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-lg">
+                    <span className="text-xs font-semibold text-emerald-200">{summary.success}</span>
+                  </div>
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-lg">
+                    <span className="text-xs font-semibold text-rose-200">{summary.failed}</span>
+                  </div>
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-lg">
+                    <span className="text-xs font-semibold text-blue-200">{summary.pending}</span>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="flex flex-col items-center gap-2 mt-2 flex-shrink-0">
               {/* Task counter badge with glass effect */}
@@ -1023,11 +1140,13 @@ export function NodeComponent({
               >
                 <Sparkles className="h-3.5 w-3.5 text-indigo-300 drop-shadow-[0_0_4px_rgba(129,140,248,0.6)]" />
                 <span className="text-xs font-medium text-slate-200">
-                  {connectedNodesCount > 0 ? `${connectedNodesCount} görev` : 'Görev ekleyin'}
+                  {(statusSummary?.total ?? connectedNodesCount) > 0
+                    ? `${statusSummary?.total ?? connectedNodesCount} görev`
+                    : 'Görev ekleyin'}
                 </span>
               </div>
               {/* Status summary with mini glass orbs */}
-              {connectedNodesCount > 0 && (
+              {(statusSummary?.total ?? connectedNodesCount) > 0 && (
                 <div className="flex items-center gap-1 p-1 rounded-xl"
                   style={{
                     background: 'rgba(0,0,0,0.15)',
@@ -1037,42 +1156,42 @@ export function NodeComponent({
                   <div
                     className="flex items-center gap-1 px-2 py-1 rounded-lg"
                     style={{
-                      background: summaryWithoutSelf.success > 0
+                      background: summary.success > 0
                         ? 'linear-gradient(145deg, rgba(16, 185, 129, 0.25) 0%, rgba(5, 150, 105, 0.3) 100%)'
                         : 'transparent',
                     }}
                   >
-                    <CheckCircle2 className={`h-3.5 w-3.5 ${summaryWithoutSelf.success > 0 ? 'text-emerald-300 drop-shadow-[0_0_4px_rgba(52,211,153,0.6)]' : 'text-white/30'}`} />
-                    <span className={`text-xs font-semibold ${summaryWithoutSelf.success > 0 ? 'text-emerald-200' : 'text-white/30'}`}>
-                      {summaryWithoutSelf.success}
+                    <CheckCircle2 className={`h-3.5 w-3.5 ${summary.success > 0 ? 'text-emerald-300 drop-shadow-[0_0_4px_rgba(52,211,153,0.6)]' : 'text-white/30'}`} />
+                    <span className={`text-xs font-semibold ${summary.success > 0 ? 'text-emerald-200' : 'text-white/30'}`}>
+                      {summary.success}
                     </span>
                   </div>
                   {/* Failed mini orb */}
                   <div
                     className="flex items-center gap-1 px-2 py-1 rounded-lg"
                     style={{
-                      background: summaryWithoutSelf.failed > 0
+                      background: summary.failed > 0
                         ? 'linear-gradient(145deg, rgba(244, 63, 94, 0.25) 0%, rgba(225, 29, 72, 0.3) 100%)'
                         : 'transparent',
                     }}
                   >
-                    <XCircle className={`h-3.5 w-3.5 ${summaryWithoutSelf.failed > 0 ? 'text-rose-300 drop-shadow-[0_0_4px_rgba(251,113,133,0.6)]' : 'text-white/30'}`} />
-                    <span className={`text-xs font-semibold ${summaryWithoutSelf.failed > 0 ? 'text-rose-200' : 'text-white/30'}`}>
-                      {summaryWithoutSelf.failed}
+                    <XCircle className={`h-3.5 w-3.5 ${summary.failed > 0 ? 'text-rose-300 drop-shadow-[0_0_4px_rgba(251,113,133,0.6)]' : 'text-white/30'}`} />
+                    <span className={`text-xs font-semibold ${summary.failed > 0 ? 'text-rose-200' : 'text-white/30'}`}>
+                      {summary.failed}
                     </span>
                   </div>
                   {/* Pending mini orb */}
                   <div
                     className="flex items-center gap-1 px-2 py-1 rounded-lg"
                     style={{
-                      background: summaryWithoutSelf.pending > 0
+                      background: summary.pending > 0
                         ? 'linear-gradient(145deg, rgba(59, 130, 246, 0.25) 0%, rgba(37, 99, 235, 0.3) 100%)'
                         : 'transparent',
                     }}
                   >
-                    <Clock3 className={`h-3.5 w-3.5 ${summaryWithoutSelf.pending > 0 ? 'text-blue-300 drop-shadow-[0_0_4px_rgba(96,165,250,0.6)]' : 'text-white/30'}`} />
-                    <span className={`text-xs font-semibold ${summaryWithoutSelf.pending > 0 ? 'text-blue-200' : 'text-white/30'}`}>
-                      {summaryWithoutSelf.pending}
+                    <Clock3 className={`h-3.5 w-3.5 ${summary.pending > 0 ? 'text-blue-300 drop-shadow-[0_0_4px_rgba(96,165,250,0.6)]' : 'text-white/30'}`} />
+                    <span className={`text-xs font-semibold ${summary.pending > 0 ? 'text-blue-200' : 'text-white/30'}`}>
+                      {summary.pending}
                     </span>
                   </div>
                 </div>

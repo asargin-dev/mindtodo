@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '../test/test-utils'
 import { Sidebar } from './Sidebar'
-import { MapMeta } from '../types'
+import type { MapMeta } from '@/types'
 
 const createTestMaps = (): MapMeta[] => [
   { id: 'map-1', name: 'Project Alpha' },
