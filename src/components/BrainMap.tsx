@@ -614,19 +614,28 @@ export function BrainMap({ mapId, mapName, onRootTitleChange, onNodesChange }: B
           const endPointY = endY - (dy / distance) * targetRadius
 
           return (
-            <line
-              key={conn.id}
-              x1={startPointX}
-              y1={startPointY}
-              x2={endPointX}
-              y2={endPointY}
-              stroke="#60a5fa"
-              strokeWidth={3}
-              strokeLinecap="round"
-              style={{
-                filter: 'drop-shadow(0 2px 4px rgba(96, 165, 250, 0.3))',
-              }}
-            />
+            <g key={conn.id}>
+              {/* Glow pass (no CSS filters to avoid compositing artifacts) */}
+              <line
+                x1={startPointX}
+                y1={startPointY}
+                x2={endPointX}
+                y2={endPointY}
+                stroke="rgba(96, 165, 250, 0.22)"
+                strokeWidth={9}
+                strokeLinecap="round"
+              />
+              {/* Main line */}
+              <line
+                x1={startPointX}
+                y1={startPointY}
+                x2={endPointX}
+                y2={endPointY}
+                stroke="#60a5fa"
+                strokeWidth={3}
+                strokeLinecap="round"
+              />
+            </g>
           )
         })}
       </svg>

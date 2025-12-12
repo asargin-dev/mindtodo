@@ -181,11 +181,12 @@ export function NodeComponent({
   const derivedBackground = useMemo(() => {
     if (!hasChildren || summary.total === 0) return null
     const total = summary.total
-    const parts: Array<[string, number]> = [
+    const rawParts: Array<[string, number]> = [
       ['rgba(16, 185, 129, 0.22)', summary.success],
       ['rgba(244, 63, 94, 0.22)', summary.failed],
       ['rgba(59, 130, 246, 0.18)', summary.pending],
-    ].filter(([, count]) => count > 0)
+    ]
+    const parts = rawParts.filter(([, count]) => count > 0)
     if (parts.length <= 1) return null
 
     let acc = 0
@@ -202,89 +203,6 @@ export function NodeComponent({
     ].join(', ')
   }, [hasChildren, summary.failed, summary.pending, summary.success, summary.total])
 
-  // Calculate dynamic size based on title for optimal text display
-  // Returns { width, height } to properly handle multi-line titles
-  const calculateDynamicSize = (title: string): { width: number; height: number } => {
-    const normalizedTitle = title.trim()
-
-    // Base dimensions
-    // Button container needs: 3×44px buttons + 2×4px gaps + 2×6px padding = 152px
-    // Plus node's px-4 content padding (2×16px = 32px) = 184px minimum
-    const baseWidth = isRootNode ? 200 : 160;
-    const minWidth = isRootNode ? 200 : 184;
-    const maxWidth = isRootNode ? 400 : 320;
-
-    // Fixed UI element heights
-    const topPadding = 48;
-    const bottomPadding = 12;
-    const buttonAreaHeight = isRootNode ? 80 : 64;
-    const titlePaddingY = 16;
-
-    if (!normalizedTitle) {
-      const width = Math.max(minWidth, baseWidth);
-      const height = topPadding + 24 + titlePaddingY + buttonAreaHeight + bottomPadding;
-      return { width, height: Math.max(width, height) };
-    }
-
-    // Font metrics
-    const fontSize = isRootNode ? 20 : 18;
-    const lineHeight = fontSize * 1.5;
-    const avgCharWidth = fontSize * 0.52;
-
-    const words = normalizedTitle.split(/\s+/)
-    const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
-    const totalLength = normalizedTitle.length;
-    const wordCount = words.length;
-
-    // Calculate width needed for longest word
-    const longestWordWidth = longestWord * avgCharWidth;
-    const minWidthForWord = Math.ceil(longestWordWidth / 0.75) + 48;
-
-    // Calculate target width based on text
-    let targetWidth = baseWidth;
-
-    if (wordCount <= 2 && totalLength <= 16) {
-      const singleLineWidth = totalLength * avgCharWidth;
-      targetWidth = Math.max(baseWidth, Math.ceil(singleLineWidth / 0.75) + 48);
-    } else {
-      const idealCharsPerLine = 12;
-      const estimatedLines = Math.ceil(totalLength / idealCharsPerLine);
-      const charsPerLine = Math.ceil(totalLength / Math.min(estimatedLines, 3));
-      const lineWidthCalc = charsPerLine * avgCharWidth;
-      targetWidth = Math.max(baseWidth, Math.ceil(lineWidthCalc / 0.75) + 48);
-    }
-
-    targetWidth = Math.max(targetWidth, minWidthForWord);
-    const finalWidth = Math.max(minWidth, Math.min(maxWidth, targetWidth));
-
-    // WORD-BASED line counting for accurate height
-    const textAreaWidth = finalWidth * 0.75;
-    let lineCount = 1;
-    let currentLineWidth = 0;
-    const spaceWidth = avgCharWidth;
-
-    for (const word of words) {
-      const wordWidth = word.length * avgCharWidth;
-      if (currentLineWidth === 0) {
-        currentLineWidth = wordWidth;
-      } else if (currentLineWidth + spaceWidth + wordWidth <= textAreaWidth) {
-        currentLineWidth += spaceWidth + wordWidth;
-      } else {
-        lineCount++;
-        currentLineWidth = wordWidth;
-      }
-    }
-
-    // Calculate title height with word-based line count
-    const titleHeight = lineCount * lineHeight;
-
-    // Calculate total height needed
-    const totalHeight = topPadding + titleHeight + titlePaddingY + buttonAreaHeight + bottomPadding;
-    const minHeight = isRootNode ? 160 : 150;
-    const finalHeight = Math.max(minHeight, Math.ceil(totalHeight) + 8);
-
-    return { width: finalWidth, height: finalHeight };
-  };
 
   const baseSize = isEditing
     ? getNodeSize(node, connectedNodesCount, localTitle)
@@ -345,16 +263,10 @@ export function NodeComponent({
       const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.3;
       const velocity = Math.random() * 6 + 3;
 
-      const colors = [
-        '#FFD700', '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
-        '#FECA57', '#FF9FF3', '#54A0FF', '#5F27CD', '#00D2D3',
-        '#FF9F43', '#10AC84', '#EE5A24', '#0984E3', '#A29BFE'
-      ];
-
       return {
         id: i,
         type: ['circle', 'square', 'triangle', 'star'][Math.floor(Math.random() * 4)] as 'circle' | 'square' | 'triangle' | 'star',
-        color: colors[Math.floor(Math.random() * colors.length)],
+        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
         x: 50,
         y: 50,
         vx: Math.cos(angle) * velocity,
@@ -681,7 +593,7 @@ export function NodeComponent({
   return (
     <div
       ref={nodeRef}
-      className={`absolute select-none transition-all duration-300
+      className={`absolute select-none transition-transform duration-300
         ${isEditing ? 'z-50' : 'z-20'}
         ${isDragging ? 'z-50' : ''}
         ${isConnecting ? 'hover:ring-2 hover:ring-emerald-400/50 hover:ring-offset-2 hover:ring-offset-transparent' : ''}
@@ -692,7 +604,7 @@ export function NodeComponent({
         width: `${baseWidth}px`,
         height: `${baseHeight}px`,
         transform: isEditing ? 'scale(1.03)' : 'scale(1)',
-        transition: isDragging ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
       onClick={onClick}
       data-component-name="NodeComponent"
@@ -865,7 +777,7 @@ export function NodeComponent({
 
       {/* Main node container */}
       <div
-        className={`absolute inset-0 rounded-3xl overflow-hidden backdrop-blur-xl border cursor-pointer z-20 transition-shadow duration-200 ${
+        className={`absolute inset-0 rounded-3xl overflow-hidden bg-slate-950/60 border cursor-pointer z-20 transition-shadow duration-200 ${
           root
             ? 'bg-gradient-to-br from-blue-600/30 via-purple-600/20 to-slate-800/40 border-blue-500/30'
             : `${statusStyle.backgroundClass} ${statusStyle.borderClass}`
@@ -976,7 +888,7 @@ export function NodeComponent({
 
           {/* Status buttons for non-root nodes OR root info - fixed at bottom */}
           {!root && !hasChildren ? (
-            <div className="flex items-center gap-1 mt-2 flex-shrink-0 p-1.5 rounded-2xl bg-black/20 backdrop-blur-sm border border-white/5">
+            <div className="flex items-center gap-1 mt-2 flex-shrink-0 p-1.5 rounded-2xl bg-black/35 border border-white/5">
               {/* Success button - glass orb style */}
               <button
                 onClick={(e) => handleStatusClick(e, 'success')}

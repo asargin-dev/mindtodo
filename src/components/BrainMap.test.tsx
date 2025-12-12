@@ -351,14 +351,15 @@ describe('BrainMap', () => {
       setLocalStorageNodes('test-map-1', nodes)
       setLocalStorageConnections('test-map-1', connections)
 
-      const { container } = render(<BrainMap {...defaultProps} />)
+	      const { container } = render(<BrainMap {...defaultProps} />)
 
-      await waitFor(() => {
-        const line = container.querySelector('svg line')
-        expect(line).toHaveAttribute('stroke', '#60a5fa')
-      })
-    })
-  })
+	      await waitFor(() => {
+	        const lines = Array.from(container.querySelectorAll('svg line'))
+	        const hasMainStroke = lines.some((line) => line.getAttribute('stroke') === '#60a5fa')
+	        expect(hasMainStroke).toBe(true)
+	      })
+	    })
+	  })
 
   describe('Title Editing', () => {
     it('should allow editing node titles', async () => {
